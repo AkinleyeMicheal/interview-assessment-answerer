@@ -7,14 +7,15 @@ _settings = {
     "GEMINI_API_KEY": os.getenv("GEMINI_API_KEY", ""),
     "GEMINI_API_KEY_2": os.getenv("GEMINI_API_KEY_2", ""),
     "GEMINI_API_KEY_3": os.getenv("GEMINI_API_KEY_3", ""),
-    "CAMERA_URL": os.getenv("CAMERA_URL", "http://10.53.59.86:8080/video"),
-    "OCR_MODE": os.getenv("OCR_MODE", "openrouter"),
-    "MODEL_NAME": os.getenv("MODEL_NAME", "gemini-2.5-flash"),
-    "OLLAMA_MODEL": os.getenv("OLLAMA_MODEL", "granite3.2-vision:2b"),
-    "OLLAMA_URL": os.getenv("OLLAMA_URL", "http://localhost:11434"),
-    "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY", ""),
-    "OPENROUTER_MODEL_1": os.getenv("OPENROUTER_MODEL_1", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"),
-    "OPENROUTER_MODEL_2": os.getenv("OPENROUTER_MODEL_2", "openrouter/free"),
+    "GEMINI_API_KEY_4": os.getenv("GEMINI_API_KEY_4", ""),
+    "GEMINI_API_KEY_5": os.getenv("GEMINI_API_KEY_5", ""),
+    "MODEL_NAME": os.getenv("MODEL_NAME", "gemini-3.8-flash"),
+    "GROQ_API_KEY": os.getenv("GROQ_API_KEY", ""),
+    "OCR_MODE": os.getenv("OCR_MODE", "groq_vision"),
+    "SCREEN_REGION_LEFT": int(os.getenv("SCREEN_REGION_LEFT", "0")),
+    "SCREEN_REGION_TOP": int(os.getenv("SCREEN_REGION_TOP", "0")),
+    "SCREEN_REGION_RIGHT": int(os.getenv("SCREEN_REGION_RIGHT", "0")),
+    "SCREEN_REGION_BOTTOM": int(os.getenv("SCREEN_REGION_BOTTOM", "0")),
 }
 
 
@@ -25,11 +26,11 @@ def get_settings():
 def update_settings(updates: dict):
     allowed_keys = {
         "GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3",
-        "CAMERA_URL", "OCR_MODE", "MODEL_NAME",
-        "OLLAMA_MODEL", "OLLAMA_URL",
-        "OPENROUTER_API_KEY", "OPENROUTER_MODEL_1", "OPENROUTER_MODEL_2",
+        "GEMINI_API_KEY_4", "GEMINI_API_KEY_5",
+        "MODEL_NAME", "GROQ_API_KEY", "OCR_MODE", "SEARXNG_URL",
+        "SCREEN_REGION_LEFT", "SCREEN_REGION_TOP", "SCREEN_REGION_RIGHT", "SCREEN_REGION_BOTTOM",
     }
-    api_key_fields = {"GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3", "OPENROUTER_API_KEY"}
+    api_key_fields = {"GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3", "GEMINI_API_KEY_4", "GEMINI_API_KEY_5", "GROQ_API_KEY"}
     for key, value in updates.items():
         if key in allowed_keys and value is not None:
             if key in api_key_fields and value == "":
@@ -50,7 +51,9 @@ def _refresh_gemini_keys():
     primary = _settings.get("GEMINI_API_KEY", "")
     k2 = _settings.get("GEMINI_API_KEY_2", "")
     k3 = _settings.get("GEMINI_API_KEY_3", "")
-    _gemini_keys = [k for k in [primary, k2, k3] if k]
+    k4 = _settings.get("GEMINI_API_KEY_4", "")
+    k5 = _settings.get("GEMINI_API_KEY_5", "")
+    _gemini_keys = [k for k in [primary, k2, k3, k4, k5] if k]
     if _gemini_key_index >= len(_gemini_keys):
         _gemini_key_index = 0
 

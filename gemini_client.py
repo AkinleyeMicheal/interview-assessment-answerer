@@ -1,90 +1,300 @@
+"""The two, intentionally separate, vision-analysis pipelines for Quizbox."""
+
+from __future__ import annotations
+
 import base64
+import json
 import re
 import time
-import json
-import urllib.request
 import urllib.error
+import urllib.request
+
 from google import genai
 from google.genai import types
-import pytesseract
-from PIL import Image, ImageFilter, ImageEnhance, ImageOps
-import io
 
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-
-from config import get_settings, get_active_gemini_key, rotate_gemini_key, get_gemini_key_status
+from config import get_active_gemini_key, get_settings, rotate_gemini_key
 
 
-def _preprocess_image(image: Image.Image) -> Image.Image:
-    img = image.convert("L")
-    img = ImageEnhance.Contrast(img).enhance(2.0)
-    img = ImageEnhance.Sharpness(img).enhance(2.0)
-    img = img.filter(ImageFilter.SHARPEN)
-    img = img.point(lambda x: 0 if x < 140 else 255)
-    return img
+GROQ_VISION_MODEL = "qwen/qwen3.6-27b"
+GROQ_SEARCH_MODEL = "groq/compound-mini"
+GROQ_TEXT_FALLBACK_MODEL = "openai/gpt-oss-20b"
 
 
-def _extract_text_ocr(image_bytes: bytes) -> str:
-    image = Image.open(io.BytesIO(image_bytes))
+GROQ_EXTRACTION_PROMPT = """Read this quiz screenshot and extract the question or instruction along with every visible answer option.
 
-    text1 = pytesseract.image_to_string(image, config="--psm 6").strip()
+This includes: direct questions, instructions like "pick the odd one out", prompts to write code, fill-in-the-blank, true/false, matching, or any other task. If there is nothing to answer or do, respond exactly with NO_QUESTION_DETECTED.
 
-    preprocessed = _preprocess_image(image)
-    text2 = pytesseract.image_to_string(preprocessed, config="--psm 6").strip()
-
-    text3 = pytesseract.image_to_string(preprocessed, config="--psm 4").strip()
-
-    best = max([text1, text2, text3], key=lambda t: len(t))
-    return best
-
-QUIZ_PROMPT = """You are an expert exam assistant with deep knowledge across all subjects. Your task is to analyze this image and answer the question shown.
-
-RULES:
-1. Ignore all browser UI, toolbars, ads, sidebars, logos, and any non-question content.
-2. Focus ONLY on the actual question text and answer options.
-3. If no question is visible, respond exactly: NO_QUESTION_DETECTED
-
-FOR MCQs (Multiple Choice Questions):
-- Carefully read ALL options (A, B, C, D, etc.) before answering.
-- Choose the SINGLE most correct answer based on facts, not opinions.
-- If unsure between two options, use reasoning and elimination to pick the best one.
-- Always provide the letter AND the text of the correct option.
-
-FOR ESSAY/OPEN-ENDED QUESTIONS:
-- Provide a comprehensive, well-structured answer.
-- Include key points and relevant details.
-- Keep the answer concise but complete.
-
-Format your response EXACTLY as:
-QUESTION: [full question text exactly as shown in the image]
+Do not solve the task yet. Respond exactly in this format:
+QUESTION: [the full question, instruction, or task text exactly as written]
 TYPE: MCQ or ESSAY
-ANSWER: [the correct option letter and text for MCQ, or the answer for ESSAY]
-EXPLANATION: [clear explanation of why this is correct and why other options are wrong for MCQ]"""
+OPTIONS: [for an MCQ, preserve all options including their letters; for anything else write N/A]"""
 
-OCR_TEXT_PROMPT_TEMPLATE = """You are an expert exam assistant. Below is text extracted via OCR from a quiz/test screen.
 
-RULES:
-1. Determine if the text contains a question. If no question is found, respond exactly: NO_QUESTION_DETECTED
-2. If it is an MCQ, carefully read ALL options and choose the SINGLE most correct answer.
-3. If it is an essay/open-ended question, provide a comprehensive answer.
+GROQ_QUICK_PROMPT = """You are an expert exam assistant. Analyze this quiz screenshot and answer the question or complete the instruction shown.
 
-Extracted text:
----
-{ocr_text}
----
+Ignore browser UI, toolbars, ads, logos, timers, and unrelated content. If there is nothing to answer or do, respond exactly with NO_QUESTION_DETECTED.
 
-Format your response EXACTLY as:
-QUESTION: [full question text]
+This includes: direct questions, "pick the odd one out", "write code to...", "what is the output of...", true/false, fill-in-the-blank, or any other task.
+
+For an MCQ, read every option and select the one correct answer.
+For any other task (essay, code writing, explanation, odd-one-out, etc.), provide a thorough, complete answer. Do not truncate or summarize — give the full answer as you would in an exam.
+
+Respond exactly in this format:
+QUESTION: [the full question, instruction, or task text]
 TYPE: MCQ or ESSAY
-ANSWER: [the correct option letter and text for MCQ, or the answer for ESSAY]
-EXPLANATION: [clear explanation of why this is correct and why other options are wrong for MCQ]"""
+OPTIONS: [all options with letters, or N/A]
+ANSWER: [the correct letter and exact option text for MCQ; for other tasks, a complete well-developed answer]
+EXPLANATION: [clear brief justification]"""
+
+
+GROQ_SEARCH_PROMPT = """You are an exam-answering assistant. Use the enabled web-search tool to verify the answer to the supplied task before answering. Use the search result to resolve factual uncertainty; do not invent sources or change the supplied options.
+
+For an MCQ, return the single correct letter and its exact option text.
+For any other task (essay, code writing, explanation, odd-one-out, etc.), provide a thorough, complete answer. Do not truncate or summarize.
+
+Return exactly this format:
+QUESTION: [repeat the supplied task]
+TYPE: MCQ or ESSAY
+OPTIONS: [repeat the supplied options, or N/A]
+ANSWER: [the answer as described above]
+EXPLANATION: [brief justification grounded in the verified information]
+
+Task:
+{question}
+
+Task type: {question_type}
+
+Options:
+{options}"""
+
+
+GEMINI_VISION_PROMPT = """You are an expert exam assistant. Analyze this quiz screenshot and answer the question or complete the instruction shown.
+
+Ignore browser UI, toolbars, ads, logos, timers, and unrelated content. If there is nothing to answer or do, respond exactly with NO_QUESTION_DETECTED.
+
+This includes: direct questions, "pick the odd one out", "write code to...", "what is the output of...", true/false, fill-in-the-blank, or any other task.
+
+For an MCQ, read every option and select the one correct answer.
+For any other task (essay, code writing, explanation, odd-one-out, etc.), provide a thorough, complete answer. Do not truncate or summarize — give the full answer as you would in an exam.
+
+Respond exactly in this format:
+QUESTION: [the full question, instruction, or task text]
+TYPE: MCQ or ESSAY
+OPTIONS: [all options with letters, or N/A]
+ANSWER: [the correct letter and exact option text for MCQ; for other tasks, a complete well-developed answer]
+EXPLANATION: [clear brief justification]"""
+
+
+def _parse_response(text: str) -> dict:
+    """Parse the shared, labelled answer format without losing multi-line options."""
+    result = {
+        "detected": False,
+        "question": "",
+        "type": "",
+        "options": "",
+        "answer": "",
+        "explanation": "",
+    }
+    if not text:
+        return result
+
+    # Models occasionally decorate labels with Markdown emphasis.
+    text = re.sub(r"\*{1,2}(QUESTION|TYPE|OPTIONS|ANSWER|EXPLANATION)\*{1,2}\s*:", r"\1:", text, flags=re.I)
+    if "NO_QUESTION_DETECTED" in text.upper():
+        return result
+
+    labels = "QUESTION|TYPE|OPTIONS|ANSWER|EXPLANATION"
+
+    def value(label: str) -> str:
+        match = re.search(
+            rf"(?:^|\n){label}:\s*(.*?)(?=\n(?:{labels}):|\Z)",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        return match.group(1).strip() if match else ""
+
+    result["question"] = value("QUESTION")
+    result["options"] = value("OPTIONS")
+    result["answer"] = value("ANSWER")
+    result["explanation"] = value("EXPLANATION")
+    response_type = value("TYPE").upper()
+    if response_type in {"MCQ", "ESSAY"}:
+        result["type"] = response_type
+    elif result["options"] and result["options"].upper() != "N/A":
+        result["type"] = "MCQ"
+    elif result["question"]:
+        result["type"] = "ESSAY"
+    result["detected"] = bool(result["question"])
+    return result
+
+
+def _groq_chat(model: str, messages: list[dict], *, max_tokens: int, timeout: int, compound: bool = False) -> tuple[str, dict]:
+    """Make one Groq Chat Completions request and preserve tool metadata."""
+    api_key = get_settings().get("GROQ_API_KEY", "")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY is not configured")
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.1,
+    }
+    if compound:
+        # Compound Mini is low-latency and permits one tool call. Restricting it
+        # to web_search makes this stage independent of any local search service.
+        payload["compound_custom"] = {"tools": {"enabled_tools": ["web_search"]}}
+
+    request = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Quizbox/1.0",
+            "Groq-Model-Version": "latest",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")[:300]
+        raise RuntimeError(f"Groq request failed (HTTP {error.code}): {detail}") from error
+    except urllib.error.URLError as error:
+        raise ConnectionError(f"Unable to reach Groq: {error.reason}") from error
+
+    try:
+        message = result["choices"][0]["message"]
+        return message.get("content", ""), message
+    except (KeyError, IndexError, TypeError) as error:
+        raise RuntimeError("Groq returned an unexpected response") from error
+
+
+def _call_groq_vision(image_bytes: bytes) -> str:
+    image_b64 = base64.b64encode(image_bytes).decode("ascii")
+    content, _message = _groq_chat(
+        GROQ_VISION_MODEL,
+        [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": GROQ_EXTRACTION_PROMPT},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+            ],
+        }],
+        max_tokens=900,
+        timeout=30,
+    )
+    return content
+
+
+def _call_groq_quick(image_bytes: bytes) -> str:
+    image_b64 = base64.b64encode(image_bytes).decode("ascii")
+    content, _message = _groq_chat(
+        GROQ_VISION_MODEL,
+        [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": GROQ_QUICK_PROMPT},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+            ],
+        }],
+        max_tokens=2000,
+        timeout=30,
+    )
+    return content
+
+
+def _sources_from_tools(message: dict) -> list[dict]:
+    """Expose Groq Compound search URLs when its tool response provides them."""
+    sources = []
+    seen = set()
+    for tool in message.get("executed_tools") or []:
+        output = tool.get("output", "") if isinstance(tool, dict) else ""
+        for url in re.findall(r"https?://[^\s\]\)\}\",]+", output):
+            url = url.rstrip(".,;")
+            if url not in seen:
+                seen.add(url)
+                sources.append({"title": "Groq web search result", "uri": url})
+    return sources
+
+
+def _analyze_with_groq_quick(image_bytes: bytes) -> dict:
+    """One-call Groq Vision: reads the screenshot and answers in a single request."""
+    output = _call_groq_quick(image_bytes)
+    parsed = _parse_response(output)
+    parsed["provider"] = "groq_vision"
+    parsed["answer_mode"] = "quick"
+    parsed["search_used"] = False
+    parsed["sources"] = []
+    return parsed
+
+
+def _analyze_with_groq_verified(image_bytes: bytes) -> dict:
+    """Two-stage: extract with Groq Vision, then verify with Groq web search."""
+    extracted = _parse_response(_call_groq_vision(image_bytes))
+    if not extracted["detected"]:
+        extracted["provider"] = "groq_vision"
+        extracted["answer_mode"] = "verified"
+        extracted["sources"] = []
+        extracted["search_used"] = False
+        return extracted
+
+    prompt = GROQ_SEARCH_PROMPT.format(
+        question=extracted["question"],
+        question_type=extracted["type"] or "ESSAY",
+        options=extracted["options"] or "N/A",
+    )
+    search_used = False
+    search_error = ""
+    fallback_reason = ""
+    try:
+        answer_text, message = _groq_chat(
+            GROQ_SEARCH_MODEL,
+            [{"role": "user", "content": prompt}],
+            max_tokens=1500,
+            timeout=45,
+            compound=True,
+        )
+        search_used = bool(message.get("executed_tools"))
+    except (ConnectionError, RuntimeError) as search_failure:
+        fallback_prompt = prompt.replace(
+            "Use the enabled web-search tool to verify the answer to the supplied task before answering.",
+            "Answer from your own knowledge; web verification is currently unavailable.",
+        )
+        answer_text, message = _groq_chat(
+            GROQ_TEXT_FALLBACK_MODEL,
+            [{"role": "user", "content": fallback_prompt}],
+            max_tokens=1500,
+            timeout=30,
+        )
+        search_used = False
+        search_error = str(search_failure)[:200]
+        fallback_reason = "Groq search unavailable — answered from model knowledge"
+    answered = _parse_response(answer_text)
+
+    answered["detected"] = True
+    answered["question"] = extracted["question"]
+    answered["type"] = extracted["type"] or answered["type"]
+    answered["options"] = extracted["options"]
+    if not answered["answer"]:
+        raise RuntimeError("Groq search completed but did not return a labelled answer")
+    answered["provider"] = "groq_vision"
+    answered["answer_mode"] = "verified"
+    answered["sources"] = _sources_from_tools(message)
+    answered["search_used"] = search_used
+    if search_error:
+        answered["search_error"] = search_error
+    if fallback_reason:
+        answered["fallback_reason"] = fallback_reason
+    return answered
+
+
+# --- Gemini Vision ---
 
 _client = None
-_last_request_time = 0
+_last_request_time = 0.0
 MIN_INTERVAL = 1.0
-COOLDOWN_SECONDS = 60
-
-_provider_status = {}
 
 
 def _get_client():
@@ -92,35 +302,14 @@ def _get_client():
     if _client is None:
         api_key = get_active_gemini_key()
         if not api_key:
-            raise ValueError("No Gemini API keys configured. Set GEMINI_API_KEY in .env or settings.")
+            raise ValueError("No Gemini API keys configured")
         _client = genai.Client(api_key=api_key)
     return _client
 
 
 def _reinit_client():
-    """Reinitialize the Gemini client (forces re-creation with current active key)."""
     global _client
     _client = None
-
-
-def _gemini_request_with_rotation(func, *args, **kwargs):
-    """
-    Call a Gemini provider function. On rate-limit error, auto-rotate the key
-    and retry once with the new key.
-    """
-    try:
-        return func(*args, **kwargs)
-    except Exception as e:
-        error_str = str(e)
-        if _is_rate_limit_error(error_str):
-            rotation = rotate_gemini_key()
-            if rotation["rotated"]:
-                _reinit_client()
-                try:
-                    return func(*args, **kwargs)
-                except Exception as retry_e:
-                    raise RuntimeError(f"Rate-limited on new key after rotation: {str(retry_e)}") from retry_e
-        raise
 
 
 def _rate_limit():
@@ -131,638 +320,88 @@ def _rate_limit():
     _last_request_time = time.time()
 
 
-def _parse_response(text: str) -> dict:
-    result = {"detected": False, "question": "", "type": "", "answer": "", "explanation": ""}
-
-    if "NO_QUESTION_DETECTED" in text:
-        return result
-
-    question_match = re.search(r"QUESTION:\s*(.+?)(?=\nTYPE:|$)", text, re.DOTALL)
-    type_match = re.search(r"TYPE:\s*(MCQ|ESSAY)", text, re.IGNORECASE)
-    answer_match = re.search(r"ANSWER:\s*(.+?)(?=\nEXPLANATION:|$)", text, re.DOTALL)
-    explanation_match = re.search(r"EXPLANATION:\s*(.+)", text, re.DOTALL)
-
-    if question_match:
-        result["detected"] = True
-        result["question"] = question_match.group(1).strip()
-    if type_match:
-        result["type"] = type_match.group(1).upper()
-    if answer_match:
-        result["answer"] = answer_match.group(1).strip()
-    if explanation_match:
-        result["explanation"] = explanation_match.group(1).strip()
-
-    return result
+def _is_rate_limit_error(error_text: str) -> bool:
+    lower = error_text.lower()
+    return any(marker in lower for marker in ("resource_exhausted", "429", "503", "unavailable", "rate", "quota", "high demand"))
 
 
-def _mark_cooldown(model_id: str):
-    _provider_status[model_id] = {
-        "available": False,
-        "retry_after": time.time() + COOLDOWN_SECONDS,
-    }
-
-
-def _check_cooldown(model_id: str) -> bool:
-    status = _provider_status.get(model_id)
-    if status is None:
-        return True
-    if status["available"]:
-        return True
-    if time.time() >= status["retry_after"]:
-        _provider_status[model_id] = {"available": True, "retry_after": 0}
-        return True
-    return False
-
-
-def _is_rate_limit_error(error_str: str) -> bool:
-    lower = error_str.lower()
-    return (
-        "RESOURCE_EXHAUSTED" in error_str
-        or "429" in error_str
-        or "rate" in lower
-        or "too many requests" in lower
-        or "quota" in lower
-        or "provider_unavailable" in lower
-        or "resourceexhausted" in lower
-        or "request limit reached" in lower
-        or "capacity" in lower
-    )
-
-
-def analyze_image(image_bytes: bytes, mode: str = None) -> dict:
-    settings = get_settings()
-    if mode is None:
-        mode = settings["OCR_MODE"]
-
-    if mode == "antigravity":
-        return _analyze_with_antigravity(image_bytes)
-    elif mode == "gemini_vision":
-        return _gemini_request_with_rotation(_analyze_with_gemini_vision, image_bytes)
-    elif mode == "openrouter":
-        return _analyze_with_openrouter(image_bytes)
-    elif mode == "tesseract_openrouter":
-        return _analyze_with_tesseract_openrouter(image_bytes)
-    elif mode == "auto":
-        return _analyze_with_auto_fallback(image_bytes)
-    elif mode == "ollama_vision":
-        return _analyze_with_ollama_vision(image_bytes)
-    elif mode == "ollama_text":
-        return _analyze_with_ollama_text(image_bytes)
-    elif mode == "tesseract":
-        return _gemini_request_with_rotation(_analyze_with_tesseract_gemini, image_bytes)
-    return _analyze_with_openrouter(image_bytes)
-
-
-def _analyze_with_auto_fallback(image_bytes: bytes) -> dict:
-    settings = get_settings()
-    errors = []
-    last_result = None
-
-    # Step 0: Try Antigravity managed agent (most capable)
-    if _check_cooldown("gemini") and settings.get("GEMINI_API_KEY"):
-        try:
-            result = _analyze_with_antigravity(image_bytes)
-            if result.get("detected"):
-                result["provider"] = "antigravity"
-                return result
-            last_result = result
-            errors.append("Antigravity: no question detected")
-        except Exception as e:
-            error_str = str(e)
-            if _is_rate_limit_error(error_str):
-                _mark_cooldown("gemini")
-                rotation = rotate_gemini_key()
-                if rotation["rotated"]:
-                    _reinit_client()
-                errors.append("Antigravity: rate-limited")
-            else:
-                errors.append(f"Antigravity: {error_str[:80]}")
-
-    # Step 1: Try OCR + OpenRouter text (most reliable)
-    if _check_cooldown("openrouter_1") and settings.get("OPENROUTER_API_KEY"):
-        try:
-            result = _analyze_with_tesseract_openrouter(image_bytes)
-            if result.get("detected"):
-                result["provider"] = f"ocr+openrouter:{settings.get('OPENROUTER_MODEL_1', '')}"
-                return result
-            last_result = result
-            errors.append("OCR+OpenRouter: no question detected")
-        except Exception as e:
-            error_str = str(e)
-            if _is_rate_limit_error(error_str):
-                _mark_cooldown("openrouter_1")
-                errors.append("OCR+OpenRouter: rate-limited")
-            else:
-                errors.append(f"OCR+OpenRouter: {error_str[:80]}")
-
-    # Step 2: Try OpenRouter vision directly
-    if _check_cooldown("openrouter_1") and settings.get("OPENROUTER_API_KEY"):
-        try:
-            result = _analyze_with_openrouter(image_bytes, settings["OPENROUTER_MODEL_1"])
-            if result.get("detected"):
-                result["provider"] = f"openrouter_vision:{settings['OPENROUTER_MODEL_1']}"
-                return result
-            last_result = result
-            errors.append("OpenRouter vision: no question detected")
-        except Exception as e:
-            error_str = str(e)
-            if _is_rate_limit_error(error_str):
-                _mark_cooldown("openrouter_1")
-                errors.append("OpenRouter vision: rate-limited")
-            else:
-                errors.append(f"OpenRouter vision: {error_str[:80]}")
-
-    # Step 3: Try OCR + OpenRouter backup model
-    if _check_cooldown("openrouter_2") and settings.get("OPENROUTER_API_KEY"):
-        try:
-            result = _analyze_with_tesseract_openrouter(image_bytes)
-            if result.get("detected"):
-                result["provider"] = f"ocr+openrouter:{settings.get('OPENROUTER_MODEL_2', '')}"
-                return result
-            last_result = result
-        except Exception as e:
-            error_str = str(e)
-            if _is_rate_limit_error(error_str):
-                _mark_cooldown("openrouter_2")
-                errors.append("OCR+OpenRouter backup: rate-limited")
-            else:
-                errors.append(f"OCR+OpenRouter backup: {error_str[:80]}")
-
-    # Step 4: Try OCR + Gemini
-    if _check_cooldown("gemini") and settings.get("GEMINI_API_KEY"):
-        try:
-            result = _analyze_with_tesseract_gemini(image_bytes)
-            if result.get("detected"):
-                result["provider"] = "ocr+gemini"
-                return result
-            last_result = result
-        except Exception as e:
-            error_str = str(e)
-            if _is_rate_limit_error(error_str):
-                _mark_cooldown("gemini")
-                rotation = rotate_gemini_key()
-                if rotation["rotated"]:
-                    _reinit_client()
-                errors.append("OCR+Gemini: rate-limited")
-            else:
-                errors.append(f"OCR+Gemini: {error_str[:80]}")
-
-    # Step 5: Try Gemini vision
-    if _check_cooldown("gemini") and settings.get("GEMINI_API_KEY"):
-        try:
-            result = _analyze_with_gemini_vision(image_bytes)
-            if result.get("detected"):
-                result["provider"] = "gemini_vision"
-                return result
-            last_result = result
-        except Exception as e:
-            error_str = str(e)
-            if _is_rate_limit_error(error_str):
-                _mark_cooldown("gemini")
-                rotation = rotate_gemini_key()
-                if rotation["rotated"]:
-                    _reinit_client()
-                errors.append("Gemini vision: rate-limited")
-            else:
-                errors.append(f"Gemini vision: {error_str[:80]}")
-
-    # Step 6: Try Ollama text (OCR + local model)
-    if _check_cooldown("ollama"):
-        try:
-            result = _analyze_with_ollama_text(image_bytes)
-            if result.get("detected"):
-                result["provider"] = "ollama_text"
-                return result
-            last_result = result
-        except Exception as e:
-            errors.append(f"Ollama text: {str(e)[:80]}")
-
-    # Step 7: Try Ollama vision
-    if _check_cooldown("ollama"):
-        try:
-            result = _analyze_with_ollama_vision(image_bytes)
-            if result.get("detected"):
-                result["provider"] = "ollama_vision"
-                return result
-            last_result = result
-        except Exception as e:
-            errors.append(f"Ollama vision: {str(e)[:80]}")
-
-    if last_result:
-        last_result["provider"] = last_result.get("provider", "auto_fallback")
-        return last_result
-
-    raise RuntimeError(f"All providers failed: {'; '.join(errors)}")
-
-
-def _analyze_with_antigravity(image_bytes: bytes) -> dict:
-    settings = get_settings()
-    api_key = settings.get("GEMINI_API_KEY", "")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY is not set. Required for Antigravity agent.")
-
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-    payload = {
-        "agent": "antigravity-preview-05-2026",
-        "input": [
-            {
-                "type": "image",
-                "data": image_b64,
-                "mime_type": "image/jpeg",
-            },
-            {
-                "type": "text",
-                "text": QUIZ_PROMPT,
-            },
-        ],
-        "environment": "remote",
-    }
-
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        "https://generativelanguage.googleapis.com/v1beta/interactions",
-        data=data,
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key,
-        },
-    )
-
+def _gemini_request_with_rotation(func, *args, **kwargs):
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            output_text = ""
-
-            # Try different response structures
-            output_text = result.get("output_text", "")
-            if not output_text:
-                output = result.get("output", {})
-                if isinstance(output, dict):
-                    output_text = output.get("text", "")
-            if not output_text:
-                steps = result.get("steps", [])
-                for step in steps:
-                    if isinstance(step, dict):
-                        # Try step.text
-                        if step.get("type") == "text" and step.get("text"):
-                            output_text = step["text"]
-                            break
-                        # Try step.content[0].text (Antigravity format)
-                        content = step.get("content", [])
-                        if isinstance(content, list):
-                            for item in content:
-                                if isinstance(item, dict) and item.get("type") == "text":
-                                    output_text = item.get("text", "")
-                                    if output_text:
-                                        break
-                        if output_text:
-                            break
-            if not output_text:
-                output_text = json.dumps(result)
-
-            parsed = _parse_response(output_text)
-            parsed["provider"] = "antigravity"
-            return parsed
-    except urllib.error.HTTPError as e:
-        body = ""
-        try:
-            body = e.read().decode("utf-8")
-        except Exception:
-            pass
-        if e.code == 429:
-            raise RuntimeError(f"Antigravity rate-limited (429): {body}")
-        raise RuntimeError(f"Antigravity HTTP {e.code}: {body}")
-    except urllib.error.URLError as e:
-        raise ConnectionError(f"Cannot connect to Antigravity API. Error: {e}")
-
-
-def _analyze_with_openrouter(image_bytes: bytes, model: str = None) -> dict:
-    settings = get_settings()
-    api_key = settings.get("OPENROUTER_API_KEY", "")
-    if not api_key:
-        raise ValueError("OPENROUTER_API_KEY is not set. Configure it in .env or settings.")
-
-    if model is None:
-        model = settings.get("OPENROUTER_MODEL_1", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free")
-
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": QUIZ_PROMPT},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
-                    },
-                ],
-            }
-        ],
-        "max_tokens": 1024,
-        "temperature": 0.1,
-    }
-
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=data,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://quizbox-ai.local",
-            "X-Title": "Quizbox AI",
-        },
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-
-            if "error" in result:
-                err_msg = result["error"].get("message", str(result["error"]))
-                err_code = result["error"].get("code", 500)
-                raise RuntimeError(f"OpenRouter error {err_code}: {err_msg}")
-
-            content = result["choices"][0]["message"]["content"]
-            parsed = _parse_response(content)
-            parsed["provider"] = f"openrouter:{model}"
-            return parsed
-    except urllib.error.HTTPError as e:
-        body = ""
-        try:
-            body = e.read().decode("utf-8")
-        except Exception:
-            pass
-        raise RuntimeError(f"OpenRouter HTTP {e.code}: {body}")
-    except urllib.error.URLError as e:
-        raise ConnectionError(f"Cannot connect to OpenRouter. Error: {e}")
-
-
-def _analyze_with_tesseract_openrouter(image_bytes: bytes) -> dict:
-    settings = get_settings()
-    api_key = settings.get("OPENROUTER_API_KEY", "")
-    if not api_key:
-        raise ValueError("OPENROUTER_API_KEY is not set.")
-
-    model = settings.get("OPENROUTER_MODEL_1", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free")
-
-    extracted_text = _extract_text_ocr(image_bytes)
-
-    if not extracted_text or len(extracted_text) < 10:
-        try:
-            parsed = _analyze_with_openrouter(image_bytes)
-            parsed["provider"] = f"openrouter_vision:{model}"
-            return parsed
-        except Exception:
-            return {"detected": False, "question": "", "type": "", "answer": "", "explanation": "", "provider": "tesseract+openrouter"}
-
-    prompt = OCR_TEXT_PROMPT_TEMPLATE.format(ocr_text=extracted_text)
-
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 1024,
-        "temperature": 0.1,
-    }
-
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=data,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://quizbox-ai.local",
-            "X-Title": "Quizbox AI",
-        },
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-
-            if "error" in result:
-                err_msg = result["error"].get("message", str(result["error"]))
-                err_code = result["error"].get("code", 500)
-                raise RuntimeError(f"OpenRouter error {err_code}: {err_msg}")
-
-            content = result["choices"][0]["message"]["content"]
-            parsed = _parse_response(content)
-            parsed["provider"] = f"tesseract+openrouter:{model}"
-            return parsed
-    except urllib.error.HTTPError as e:
-        body = ""
-        try:
-            body = e.read().decode("utf-8")
-        except Exception:
-            pass
-        raise RuntimeError(f"OpenRouter HTTP {e.code}: {body}")
-    except urllib.error.URLError as e:
-        raise ConnectionError(f"Cannot connect to OpenRouter. Error: {e}")
+        return func(*args, **kwargs)
+    except Exception as error:
+        if _is_rate_limit_error(str(error)):
+            rotation = rotate_gemini_key()
+            if rotation["rotated"]:
+                _reinit_client()
+                return func(*args, **kwargs)
+        raise
 
 
 def _analyze_with_gemini_vision(image_bytes: bytes) -> dict:
     _rate_limit()
-    client = _get_client()
-    settings = get_settings()
-
-    response = client.models.generate_content(
-        model=settings["MODEL_NAME"],
+    response = _get_client().models.generate_content(
+        model=get_settings()["MODEL_NAME"],
         contents=[
             types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-            QUIZ_PROMPT,
+            GEMINI_VISION_PROMPT,
         ],
     )
-
     result = _parse_response(response.text)
-    result["provider"] = "gemini"
+    result["provider"] = "gemini_vision"
+    result["sources"] = []
     return result
 
 
-def _analyze_with_ollama_vision(image_bytes: bytes) -> dict:
-    settings = get_settings()
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-    payload = {
-        "model": settings["OLLAMA_MODEL"],
-        "prompt": QUIZ_PROMPT,
-        "images": [image_b64],
-        "stream": False,
-        "options": {
-            "temperature": 0.1,
-            "num_predict": 1024,
-        },
-    }
-
-    url = f"{settings['OLLAMA_URL']}/api/generate"
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            parsed = _parse_response(result.get("response", ""))
-            parsed["provider"] = "ollama"
-            return parsed
-    except urllib.error.URLError as e:
-        raise ConnectionError(f"Cannot connect to Ollama at {settings['OLLAMA_URL']}. Is it running? Error: {e}")
+def analyze_image(image_bytes: bytes, mode: str | None = None, groq_strategy: str = "quick") -> dict:
+    mode = mode or get_settings()["OCR_MODE"]
+    if mode == "groq_vision":
+        if groq_strategy == "verified":
+            return _analyze_with_groq_verified(image_bytes)
+        return _analyze_with_groq_quick(image_bytes)
+    if mode == "gemini_vision":
+        return _gemini_request_with_rotation(_analyze_with_gemini_vision, image_bytes)
+    raise ValueError(f"Unsupported analysis mode: {mode}")
 
 
-def _analyze_with_ollama_text(image_bytes: bytes) -> dict:
-    settings = get_settings()
-
-    extracted_text = _extract_text_ocr(image_bytes)
-
-    if not extracted_text or len(extracted_text) < 10:
-        try:
-            parsed = _analyze_with_ollama_vision(image_bytes)
-            parsed["provider"] = "ollama_vision"
-            return parsed
-        except Exception:
-            return {"detected": False, "question": "", "type": "", "answer": "", "explanation": "", "provider": "tesseract+ollama"}
-
-    prompt = OCR_TEXT_PROMPT_TEMPLATE.format(ocr_text=extracted_text)
-
-    payload = {
-        "model": settings["OLLAMA_MODEL"],
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0.1,
-            "num_predict": 1024,
-        },
-    }
-
-    url = f"{settings['OLLAMA_URL']}/api/generate"
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            parsed = _parse_response(result.get("response", ""))
-            parsed["provider"] = "tesseract+ollama"
-            return parsed
-    except urllib.error.URLError as e:
-        raise ConnectionError(f"Cannot connect to Ollama at {settings['OLLAMA_URL']}. Is it running? Error: {e}")
-
-
-def _analyze_with_tesseract_gemini(image_bytes: bytes) -> dict:
-    _rate_limit()
-    client = _get_client()
-    settings = get_settings()
-
-    extracted_text = _extract_text_ocr(image_bytes)
-
-    if not extracted_text or len(extracted_text) < 10:
-        return {"detected": False, "question": "", "type": "", "answer": "", "explanation": "", "provider": "tesseract+gemini"}
-
-    prompt = OCR_TEXT_PROMPT_TEMPLATE.format(ocr_text=extracted_text)
-
-    response = client.models.generate_content(
-        model=settings["MODEL_NAME"],
-        contents=[prompt],
+def check_groq_status() -> dict:
+    """Check the configured key without spending tokens on an inference request."""
+    api_key = get_settings().get("GROQ_API_KEY", "")
+    if not api_key:
+        return {"configured": False, "valid": False, "error": "No API key set"}
+    request = urllib.request.Request(
+        "https://api.groq.com/openai/v1/models",
+        headers={"Authorization": f"Bearer {api_key}", "User-Agent": "Quizbox/1.0"},
     )
-
-    result = _parse_response(response.text)
-    result["provider"] = "tesseract+gemini"
-    return result
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            model_ids = {item.get("id") for item in json.loads(response.read().decode("utf-8")).get("data", [])}
+        return {
+            "configured": True,
+            "valid": True,
+            "vision_available": GROQ_VISION_MODEL in model_ids,
+            "search_available": GROQ_SEARCH_MODEL in model_ids,
+        }
+    except urllib.error.HTTPError as error:
+        return {"configured": True, "valid": False, "error": f"HTTP {error.code}"}
+    except Exception as error:
+        return {"configured": True, "valid": False, "error": str(error)}
 
 
 def get_provider_status() -> dict:
     settings = get_settings()
-    now = time.time()
-
-    providers = {
-        "antigravity": {
-            "name": "Antigravity (Google Agent)",
-            "model": "antigravity-preview-05-2026",
-            "configured": bool(settings.get("GEMINI_API_KEY")),
-            "available": _check_cooldown("gemini"),
+    return {
+        "groq_vision": {
+            "name": "Groq Vision + web verification",
+            "model": f"{GROQ_VISION_MODEL} → {GROQ_SEARCH_MODEL}",
+            "configured": bool(settings.get("GROQ_API_KEY")),
+            "available": True,
             "cooldown_remaining": 0,
         },
-        "openrouter_1": {
-            "name": "OpenRouter (Primary)",
-            "model": settings.get("OPENROUTER_MODEL_1", ""),
-            "configured": bool(settings.get("OPENROUTER_API_KEY")),
-            "available": _check_cooldown("openrouter_1"),
-            "cooldown_remaining": 0,
-        },
-        "openrouter_2": {
-            "name": "OpenRouter (Backup)",
-            "model": settings.get("OPENROUTER_MODEL_2", ""),
-            "configured": bool(settings.get("OPENROUTER_API_KEY")),
-            "available": _check_cooldown("openrouter_2"),
-            "cooldown_remaining": 0,
-        },
-        "gemini": {
-            "name": "Gemini (Fallback)",
+        "gemini_vision": {
+            "name": "Gemini Vision",
             "model": settings.get("MODEL_NAME", ""),
-            "configured": bool(settings.get("GEMINI_API_KEY")),
-            "available": _check_cooldown("gemini"),
-            "cooldown_remaining": 0,
-        },
-        "ollama": {
-            "name": "Ollama (Local)",
-            "model": settings.get("OLLAMA_MODEL", ""),
-            "configured": True,
-            "available": _check_cooldown("ollama"),
+            "configured": bool(get_active_gemini_key()),
+            "available": True,
             "cooldown_remaining": 0,
         },
     }
-
-    for key in ["antigravity", "openrouter_1", "openrouter_2", "gemini", "ollama"]:
-        status = _provider_status.get(key)
-        if status and not status["available"]:
-            remaining = max(0, int(status["retry_after"] - now))
-            providers[key]["cooldown_remaining"] = remaining
-            providers[key]["available"] = remaining == 0
-
-    return providers
-
-
-def check_ollama_status() -> dict:
-    settings = get_settings()
-    url = f"{settings['OLLAMA_URL']}/api/tags"
-    try:
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            models = [m["name"] for m in data.get("models", [])]
-            return {"connected": True, "models": models}
-    except Exception:
-        return {"connected": False, "models": []}
-
-
-def check_openrouter_status() -> dict:
-    settings = get_settings()
-    api_key = settings.get("OPENROUTER_API_KEY", "")
-    if not api_key:
-        return {"configured": False, "valid": False, "error": "No API key set"}
-
-    req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/key",
-        headers={"Authorization": f"Bearer {api_key}"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            key_data = data.get("data", {})
-            return {
-                "configured": True,
-                "valid": True,
-                "label": key_data.get("label", ""),
-                "usage": key_data.get("usage", 0),
-                "limit_remaining": key_data.get("limit_remaining"),
-                "is_free_tier": key_data.get("is_free_tier", True),
-            }
-    except urllib.error.HTTPError as e:
-        return {"configured": True, "valid": False, "error": f"HTTP {e.code}"}
-    except Exception as e:
-        return {"configured": True, "valid": False, "error": str(e)}

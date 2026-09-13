@@ -42,7 +42,7 @@ body {
 }
 .header button:active { background: #222; }
 
-.mode-bar {
+.ai-bar {
   display: flex;
   gap: 6px;
   padding: 8px 16px;
@@ -52,7 +52,7 @@ body {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
-.mode-btn {
+.ai-btn {
   padding: 6px 12px;
   border: 1px solid #333;
   border-radius: 20px;
@@ -64,13 +64,32 @@ body {
   white-space: nowrap;
   transition: all 0.2s;
 }
-.mode-btn.active {
+.ai-btn.active {
   background: #4ade80;
   color: #000;
   border-color: #4ade80;
   font-weight: 600;
 }
-.mode-btn:active { transform: scale(0.95); }
+.ai-btn:active { transform: scale(0.95); }
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  background: #0d0d0d;
+  font-size: 11px;
+  color: #555;
+  flex-shrink: 0;
+}
+.status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 5px;
+}
+.status-dot.on { background: #4ade80; }
+.status-dot.off { background: #ef4444; }
 
 .camera-area {
   flex: 1;
@@ -85,7 +104,7 @@ body {
 .camera-area video, .camera-area img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 .camera-overlay {
   position: absolute;
@@ -102,12 +121,29 @@ body {
   border-radius: 12px;
   box-shadow: 0 0 20px rgba(74, 222, 128, 0.15);
 }
-.no-camera {
+.no-stream {
   color: #555;
   font-size: 14px;
   text-align: center;
   padding: 20px;
+  line-height: 1.6;
 }
+
+.select-region-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 8px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.select-region-btn:active { opacity: 0.7; }
 
 .controls {
   padding: 16px;
@@ -116,6 +152,7 @@ body {
   display: flex;
   gap: 12px;
   flex-shrink: 0;
+  position: relative;
 }
 .btn {
   flex: 1;
@@ -137,13 +174,18 @@ body {
   color: #999;
   cursor: not-allowed;
 }
+.btn-verified {
+  background: #ea580c;
+  color: #fff;
+}
+.btn-verified.cooldown-active {
+  background: #333;
+  color: #999;
+  cursor: not-allowed;
+}
 .btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-
-.controls {
-  position: relative;
 }
 
 .timer-icon-btn {
@@ -226,7 +268,7 @@ body {
   background: #111;
   border-top: 1px solid #222;
   padding: 16px;
-  max-height: 40dvh;
+  max-height: 55dvh;
   overflow-y: auto;
   flex-shrink: 0;
   display: none;
@@ -244,8 +286,9 @@ body {
 .badge.mcq { background: #7c3aed; color: #fff; }
 .badge.essay { background: #ea580c; color: #fff; }
 .badge.gemini { background: #2563eb; color: #fff; }
-.badge.openrouter { background: #06b6d4; color: #fff; }
-.badge.ollama { background: #16a34a; color: #fff; }
+.badge.gemini_search { background: #ea580c; color: #fff; }
+.badge.not_verified { background: #78716c; color: #fff; }
+.badge.timer { background: #555; color: #ccc; font-size: 10px; }
 .answer-panel .question {
   font-size: 14px;
   color: #ccc;
@@ -266,6 +309,12 @@ body {
   margin-bottom: 10px;
   line-height: 1.4;
 }
+.answer-panel .answer.essay {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
 .answer-panel .explanation {
   font-size: 13px;
   color: #999;
@@ -277,25 +326,6 @@ body {
   text-align: center;
   padding: 10px 0;
 }
-
-.status-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 16px;
-  background: #0d0d0d;
-  font-size: 11px;
-  color: #555;
-  flex-shrink: 0;
-}
-.status-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  display: inline-block;
-  margin-right: 5px;
-}
-.status-dot.on { background: #4ade80; }
-.status-dot.off { background: #ef4444; }
 
 .spinner {
   display: inline-block;
@@ -491,19 +521,15 @@ body {
 <div class="header">
   <h1>Quizbox AI</h1>
   <div style="display:flex;gap:6px;">
-    <button id="qrBtn" title="Show QR Code" style="background:none;border:1px solid #333;color:#aaa;font-size:18px;width:36px;height:36px;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;">&#9641;</button>
-    <button id="rotateKeyBtn" title="Rotate Gemini Key" style="background:none;border:1px solid #333;color:#aaa;font-size:16px;width:36px;height:36px;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;">&#128273;</button>
-    <button id="settingsBtn" title="Settings" style="background:none;border:1px solid #333;color:#aaa;font-size:20px;width:36px;height:36px;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;">&#9881;</button>
+    <button id="qrBtn" title="Show QR Code">&#9641;</button>
+    <button id="rotateKeyBtn" title="Rotate Gemini Key">&#128273;</button>
+    <button id="settingsBtn" title="Settings">&#9881;</button>
   </div>
 </div>
 
-<div class="mode-bar" id="modeBar">
-  <button class="mode-btn active" data-mode="openrouter">OpenRouter</button>
-  <button class="mode-btn" data-mode="tesseract_openrouter">OCR + OpenRouter</button>
-  <button class="mode-btn" data-mode="antigravity">Antigravity</button>
-  <button class="mode-btn" data-mode="auto">Auto Fallback</button>
-  <button class="mode-btn" data-mode="gemini_vision">Gemini</button>
-  <button class="mode-btn" data-mode="ollama_text">Ollama</button>
+<div class="ai-bar" id="aiBar">
+  <button class="ai-btn active" data-ai="groq_vision">Groq Vision</button>
+  <button class="ai-btn" data-ai="gemini_vision">Gemini Vision</button>
 </div>
 
 <div class="status-bar">
@@ -513,9 +539,13 @@ body {
 </div>
 
 <div class="camera-area" id="cameraArea">
-  <video id="cameraPreview" autoplay playsinline muted></video>
+  <img id="streamPreview" style="display:none;" alt="Screen stream">
   <div class="camera-overlay"><div class="scan-frame"></div></div>
-  <div class="no-camera" id="noCamera" style="display:none;">Tap Capture to use phone camera</div>
+  <div class="no-stream" id="noStream">
+    <div style="font-size:48px;margin-bottom:12px;">&#128247;</div>
+    <div>Tap <b>Select Region</b> to choose<br>the area to capture from your screen</div>
+  </div>
+  <button id="selectRegionBtn" class="select-region-btn">Select Region</button>
 </div>
 
 <div class="answer-panel" id="answerPanel">
@@ -523,7 +553,9 @@ body {
 </div>
 
 <div class="controls">
-  <button class="btn btn-capture" id="captureBtn">Capture</button>
+  <button class="btn btn-capture" id="captureQuickBtn" disabled>Quick Answer</button>
+  <button class="btn btn-verified" id="captureVerifiedBtn" disabled style="display:none;">Web Verified</button>
+  <button class="btn btn-capture" id="captureBtn" disabled style="display:none;">Capture</button>
   <button class="timer-icon-btn" id="cooldownBtn" title="Set cooldown">&#9202;</button>
   <div class="cooldown-popup" id="cooldownPopup">
     <h4>Capture Cooldown</h4>
@@ -542,43 +574,30 @@ body {
   <div class="settings-content">
     <h2>Settings</h2>
     <div class="field">
-      <label>Gemini API Key</label>
+      <label>Groq API Key</label>
+      <input type="password" id="groqKeyInput" placeholder="gsk_...">
+      <div class="hint">Free at console.groq.com. Primary provider.</div>
+    </div>
+    <div class="field">
+      <label>Gemini Vision API Key</label>
       <input type="password" id="apiKeyInput" placeholder="AIza...">
     </div>
     <div class="field">
-      <label>Gemini API Key 2 (optional, for rotation)</label>
+      <label>Gemini API Key 2 (optional)</label>
       <input type="password" id="apiKeyInput2" placeholder="Second key...">
     </div>
     <div class="field">
-      <label>Gemini API Key 3 (optional, for rotation)</label>
+      <label>Gemini API Key 3 (optional)</label>
       <input type="password" id="apiKeyInput3" placeholder="Third key...">
     </div>
     <div class="field">
-      <label>Camera URL (IP Webcam)</label>
-      <input type="text" id="cameraUrlInput" placeholder="http://192.168.x.x:8080/video">
+      <label>Gemini API Key 4 (optional)</label>
+      <input type="password" id="apiKeyInput4" placeholder="Fourth key...">
     </div>
     <div class="field">
-      <label>OpenRouter API Key</label>
-      <input type="password" id="openrouterKeyInput" placeholder="sk-or-...">
-      <div class="hint">Free at openrouter.ai. Primary provider for quiz answering.</div>
+      <label>Gemini API Key 5 (optional)</label>
+      <input type="password" id="apiKeyInput5" placeholder="Fifth key...">
     </div>
-    <div class="field">
-      <label>OpenRouter Model 1 (Primary)</label>
-      <input type="text" id="openrouterModel1Input" placeholder="nvidia/nemotron-nano-2-vl:free">
-    </div>
-    <div class="field">
-      <label>OpenRouter Model 2 (Backup)</label>
-      <input type="text" id="openrouterModel2Input" placeholder="openrouter/free">
-    </div>
-    <div class="field">
-      <label>Ollama Model</label>
-      <input type="text" id="ollamaModelInput" placeholder="llava:7b">
-    </div>
-    <div class="field">
-      <label>Ollama URL</label>
-      <input type="text" id="ollamaUrlInput" placeholder="http://localhost:11434">
-    </div>
-
     <div class="providers-section" id="providersSection">
       <h3>Provider Status</h3>
       <div id="providersList"></div>
@@ -606,9 +625,12 @@ body {
 
 <script src="/static/qr.js"></script>
 <script>
-const cameraPreview = document.getElementById('cameraPreview');
-const noCamera = document.getElementById('noCamera');
+const streamPreview = document.getElementById('streamPreview');
+const selectRegionBtn = document.getElementById('selectRegionBtn');
+const noStream = document.getElementById('noStream');
 const captureBtn = document.getElementById('captureBtn');
+const captureQuickBtn = document.getElementById('captureQuickBtn');
+const captureVerifiedBtn = document.getElementById('captureVerifiedBtn');
 const answerPanel = document.getElementById('answerPanel');
 const answerContent = document.getElementById('answerContent');
 const statusDot = document.getElementById('statusDot');
@@ -620,18 +642,15 @@ const settingsModal = document.getElementById('settingsModal');
 const apiKeyInput = document.getElementById('apiKeyInput');
 const apiKeyInput2 = document.getElementById('apiKeyInput2');
 const apiKeyInput3 = document.getElementById('apiKeyInput3');
-const cameraUrlInput = document.getElementById('cameraUrlInput');
-const openrouterKeyInput = document.getElementById('openrouterKeyInput');
-const openrouterModel1Input = document.getElementById('openrouterModel1Input');
-const openrouterModel2Input = document.getElementById('openrouterModel2Input');
-const ollamaModelInput = document.getElementById('ollamaModelInput');
-const ollamaUrlInput = document.getElementById('ollamaUrlInput');
+const apiKeyInput4 = document.getElementById('apiKeyInput4');
+const apiKeyInput5 = document.getElementById('apiKeyInput5');
+const groqKeyInput = document.getElementById('groqKeyInput');
 const providersList = document.getElementById('providersList');
 const geminiKeyStatus = document.getElementById('geminiKeyStatus');
 const cancelSettings = document.getElementById('cancelSettings');
 const saveSettings = document.getElementById('saveSettings');
 const toast = document.getElementById('toast');
-const modeBar = document.getElementById('modeBar');
+const aiBar = document.getElementById('aiBar');
 const cooldownBtn = document.getElementById('cooldownBtn');
 const cooldownPopup = document.getElementById('cooldownPopup');
 const cooldownInput = document.getElementById('cooldownInput');
@@ -639,25 +658,16 @@ const cooldownPopupSave = document.getElementById('cooldownPopupSave');
 const cooldownPopupCancel = document.getElementById('cooldownPopupCancel');
 const rotateKeyBtn = document.getElementById('rotateKeyBtn');
 
-let stream = null;
 let answerCount = 0;
 let isProcessing = false;
-let currentMode = 'openrouter';
+let currentAI = 'groq_vision';
+let streamActive = false;
+let streamGeneration = 0;
+let displayedFrameUrl = null;
 
 let cooldownDuration = parseInt(localStorage.getItem('quizbox_cooldown') || '20', 10);
 let cooldownRemaining = 0;
 let cooldownInterval = null;
-
-async function initMode() {
-  try {
-    const res = await fetch('/api/settings');
-    const data = await res.json();
-    currentMode = data.OCR_MODE || 'openrouter';
-    modeBar.querySelectorAll('.mode-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.mode === currentMode);
-    });
-  } catch (e) {}
-}
 
 function showToast(msg, duration = 2500) {
   toast.textContent = msg;
@@ -667,8 +677,14 @@ function showToast(msg, duration = 2500) {
 
 function startCooldown(seconds) {
   cooldownRemaining = seconds;
+  captureQuickBtn.disabled = true;
+  captureVerifiedBtn.disabled = true;
   captureBtn.disabled = true;
+  captureQuickBtn.classList.add('cooldown-active');
+  captureVerifiedBtn.classList.add('cooldown-active');
   captureBtn.classList.add('cooldown-active');
+  captureQuickBtn.textContent = `Wait ${cooldownRemaining}s`;
+  captureVerifiedBtn.textContent = `Wait ${cooldownRemaining}s`;
   captureBtn.textContent = `Wait ${cooldownRemaining}s`;
   if (cooldownInterval) clearInterval(cooldownInterval);
   cooldownInterval = setInterval(() => {
@@ -677,10 +693,16 @@ function startCooldown(seconds) {
       clearInterval(cooldownInterval);
       cooldownInterval = null;
       cooldownRemaining = 0;
-      captureBtn.disabled = false;
+      captureQuickBtn.classList.remove('cooldown-active');
+      captureVerifiedBtn.classList.remove('cooldown-active');
       captureBtn.classList.remove('cooldown-active');
+      captureQuickBtn.textContent = 'Quick Answer';
+      captureVerifiedBtn.textContent = 'Web Verified';
       captureBtn.textContent = 'Capture';
+      updateCaptureButtons();
     } else {
+      captureQuickBtn.textContent = `Wait ${cooldownRemaining}s`;
+      captureVerifiedBtn.textContent = `Wait ${cooldownRemaining}s`;
       captureBtn.textContent = `Wait ${cooldownRemaining}s`;
     }
   }, 1000);
@@ -722,12 +744,9 @@ async function loadSettings() {
     apiKeyInput.value = data.GEMINI_API_KEY || '';
     apiKeyInput2.value = data.GEMINI_API_KEY_2 || '';
     apiKeyInput3.value = data.GEMINI_API_KEY_3 || '';
-    cameraUrlInput.value = data.CAMERA_URL || '';
-    openrouterKeyInput.value = data.OPENROUTER_API_KEY || '';
-    openrouterModel1Input.value = data.OPENROUTER_MODEL_1 || 'nvidia/nemotron-nano-2-vl:free';
-    openrouterModel2Input.value = data.OPENROUTER_MODEL_2 || 'openrouter/free';
-    ollamaModelInput.value = data.OLLAMA_MODEL || 'granite3.2-vision:2b';
-    ollamaUrlInput.value = data.OLLAMA_URL || 'http://localhost:11434';
+    apiKeyInput4.value = data.GEMINI_API_KEY_4 || '';
+    apiKeyInput5.value = data.GEMINI_API_KEY_5 || '';
+    groqKeyInput.value = data.GROQ_API_KEY || '';
   } catch (e) {
     console.error('Failed to load settings', e);
   }
@@ -742,7 +761,6 @@ async function loadProviders() {
       let dotClass = 'not-configured';
       let detail = 'Not configured';
       if (!p.configured) {
-        dotClass = 'not-configured';
         detail = 'No API key';
       } else if (p.cooldown_remaining > 0) {
         dotClass = 'cooldown';
@@ -750,14 +768,12 @@ async function loadProviders() {
       } else if (p.available !== false) {
         dotClass = 'configured';
         detail = p.model || 'Ready';
-      } else {
-        dotClass = 'off';
-        detail = 'Unavailable';
       }
+      const statusExtra = p.groq_status && !p.groq_status.valid ? ' (key invalid)' : '';
       html += `<div class="provider-row">
         <span class="provider-name">${p.name}</span>
         <span class="provider-status">
-          <span class="provider-detail">${detail}</span>
+          <span class="provider-detail">${detail}${statusExtra}</span>
           <span class="provider-dot ${dotClass}"></span>
         </span>
       </div>`;
@@ -768,109 +784,108 @@ async function loadProviders() {
   }
 }
 
-async function checkCamera() {
+async function checkScreenStatus() {
   try {
-    const res = await fetch('/api/camera-status');
+    const res = await fetch('/api/screen/status');
     const data = await res.json();
-    if (data.connected) {
-      statusDot.className = 'status-dot on';
-      statusText.textContent = 'IP Camera connected';
-    } else {
-      statusDot.className = 'status-dot off';
-      statusText.textContent = 'Using phone camera';
+    if (data.running && data.region) {
+      activateStream();
     }
-  } catch (e) {
-    statusDot.className = 'status-dot off';
-    statusText.textContent = 'Using phone camera';
-  }
+  } catch (e) {}
 }
 
-async function startPhoneCamera() {
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-    });
-    cameraPreview.srcObject = stream;
-    cameraPreview.style.display = 'block';
-    noCamera.style.display = 'none';
-    statusDot.className = 'status-dot on';
-    statusText.textContent = 'Phone camera active';
-  } catch (e) {
-    cameraPreview.style.display = 'none';
-    noCamera.style.display = 'block';
-    statusText.textContent = 'No camera available';
-  }
+function activateStream() {
+  const generation = ++streamGeneration;
+  streamActive = true;
+  streamPreview.style.display = 'block';
+  noStream.style.display = 'none';
+  statusDot.className = 'status-dot on';
+  statusText.textContent = 'Screen capture active';
+  updateCaptureButtons();
+  pullLatestFrames(generation);
 }
 
-function captureFrame() {
-  const canvas = document.createElement('canvas');
-  const video = cameraPreview;
-  canvas.width = video.videoWidth || 640;
-  canvas.height = video.videoHeight || 480;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
-}
+function updateCaptureButtons() {
+  const groqActive = currentAI === 'groq_vision';
+  captureQuickBtn.style.display = groqActive ? '' : 'none';
+  captureVerifiedBtn.style.display = groqActive ? '' : 'none';
+  captureBtn.style.display = groqActive ? 'none' : '';
 
-async function sendCapture(base64Image) {
-  const res = await fetch('/api/accept', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image: base64Image })
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.detail || 'Server error');
-  }
-  return res.json();
-}
-
-function showAnswer(result) {
-  answerPanel.classList.add('visible');
-
-  if (!result.detected) {
-    answerContent.innerHTML = '<div class="no-question">No question detected. Reposition camera and try again.</div>';
+  if (!streamActive) {
+    captureQuickBtn.disabled = true;
+    captureVerifiedBtn.disabled = true;
+    captureBtn.disabled = true;
     return;
   }
 
-  const typeBadge = result.type === 'MCQ'
-    ? '<span class="badge mcq">MCQ</span>'
-    : '<span class="badge essay">ESSAY</span>';
-
-  let providerBadge = '';
-  const provider = result.provider || result.mode_used || '';
-  if (provider.includes('tesseract') && provider.includes('openrouter')) {
-    providerBadge = '<span class="badge openrouter">OCR + OPENROUTER</span>';
-  } else if (provider.includes('openrouter')) {
-    providerBadge = '<span class="badge openrouter">OPENROUTER</span>';
-  } else if (provider.includes('ollama')) {
-    providerBadge = '<span class="badge ollama">OLLAMA</span>';
-  } else if (provider.includes('tesseract') && provider.includes('gemini')) {
-    providerBadge = '<span class="badge gemini">OCR + GEMINI</span>';
+  if (cooldownRemaining > 0) {
+    captureQuickBtn.disabled = true;
+    captureVerifiedBtn.disabled = true;
+    captureBtn.disabled = true;
   } else {
-    providerBadge = '<span class="badge gemini">GEMINI</span>';
-  }
-
-  answerContent.innerHTML = `
-    ${typeBadge} ${providerBadge}
-    <div class="question">${escapeHtml(result.question)}</div>
-    <div class="answer-label">Answer</div>
-    <div class="answer">${escapeHtml(result.answer)}</div>
-    ${result.explanation ? `<div class="explanation">${escapeHtml(result.explanation)}</div>` : ''}
-  `;
-
-  if (result.provider) {
-    providerText.textContent = result.provider;
+    captureQuickBtn.disabled = false;
+    captureVerifiedBtn.disabled = false;
+    captureBtn.disabled = false;
   }
 }
 
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+async function pullLatestFrames(generation) {
+  const frameIntervalMs = 1000 / 15;
+  while (streamActive && generation === streamGeneration) {
+    const startedAt = performance.now();
+    try {
+      // Fetching the next image only after the current one decoded gives the
+      // phone explicit back-pressure: no browser or TCP queue of old frames.
+      const res = await fetch('/api/screen/frame?nonce=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Frame request failed (${res.status})`);
+      const nextUrl = URL.createObjectURL(await res.blob());
+
+      await new Promise((resolve, reject) => {
+        streamPreview.onload = resolve;
+        streamPreview.onerror = reject;
+        streamPreview.src = nextUrl;
+      });
+
+      if (generation !== streamGeneration) {
+        URL.revokeObjectURL(nextUrl);
+        return;
+      }
+      if (displayedFrameUrl) URL.revokeObjectURL(displayedFrameUrl);
+      displayedFrameUrl = nextUrl;
+    } catch (e) {
+      if (generation !== streamGeneration) return;
+      // The capture worker may need a moment to create its first JPEG. Retry
+      // instead of leaving the UI on a permanent stale/error state.
+      await new Promise(resolve => setTimeout(resolve, 150));
+      continue;
+    }
+
+    const wait = frameIntervalMs - (performance.now() - startedAt);
+    if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+  }
 }
 
-captureBtn.addEventListener('click', async () => {
+selectRegionBtn.addEventListener('click', async () => {
+  showToast('Draw a rectangle on your screen...');
+  try {
+    const res = await fetch('/api/screen/select', { method: 'POST' });
+    const data = await res.json();
+    if (data.selected) {
+      showToast(`Region: ${data.width}x${data.height}`);
+      activateStream();
+    } else {
+      showToast('Selection cancelled');
+    }
+  } catch (e) {
+    showToast('Failed to select region');
+  }
+});
+
+captureQuickBtn.addEventListener('click', () => handleCapture('quick'));
+captureVerifiedBtn.addEventListener('click', () => handleCapture('verified'));
+captureBtn.addEventListener('click', () => handleCapture('quick'));
+
+async function handleCapture(strategy) {
   if (isProcessing) return;
 
   if (cooldownRemaining > 0) {
@@ -878,24 +893,27 @@ captureBtn.addEventListener('click', async () => {
     return;
   }
 
-  let base64Image;
-  if (stream) {
-    base64Image = captureFrame();
-  } else {
-    await startPhoneCamera();
-    if (!stream) {
-      showToast('No camera available');
-      return;
-    }
-    base64Image = captureFrame();
+  if (!streamActive || !streamPreview.src || streamPreview.naturalWidth === 0) {
+    showToast('No screen stream. Select a region first.');
+    return;
   }
 
+  const canvas = document.createElement('canvas');
+  canvas.width = streamPreview.naturalWidth;
+  canvas.height = streamPreview.naturalHeight;
+  canvas.getContext('2d').drawImage(streamPreview, 0, 0);
+  const base64Image = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+
+  const activeBtn = strategy === 'verified' ? captureVerifiedBtn : (currentAI === 'groq_vision' ? captureQuickBtn : captureBtn);
+
   isProcessing = true;
+  captureQuickBtn.disabled = true;
+  captureVerifiedBtn.disabled = true;
   captureBtn.disabled = true;
-  captureBtn.innerHTML = '<span class="spinner"></span>Analyzing...';
+  activeBtn.innerHTML = '<span class="spinner"></span>Analyzing...';
 
   try {
-    const result = await sendCapture(base64Image);
+    const result = await sendCapture(base64Image, strategy);
     showAnswer(result);
     answerCount++;
     countText.textContent = `${answerCount} answered`;
@@ -914,30 +932,125 @@ captureBtn.addEventListener('click', async () => {
     } else {
       showToast('Error: ' + msg);
     }
-    captureBtn.disabled = false;
+    captureQuickBtn.classList.remove('cooldown-active');
+    captureVerifiedBtn.classList.remove('cooldown-active');
     captureBtn.classList.remove('cooldown-active');
+    captureQuickBtn.textContent = 'Quick Answer';
+    captureVerifiedBtn.textContent = 'Web Verified';
     captureBtn.textContent = 'Capture';
+    updateCaptureButtons();
   } finally {
     isProcessing = false;
   }
-});
+}
 
-modeBar.addEventListener('click', (e) => {
-  const btn = e.target.closest('.mode-btn');
+aiBar.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.ai-btn');
   if (!btn) return;
 
-  modeBar.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  aiBar.querySelectorAll('.ai-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  currentMode = btn.dataset.mode;
+  currentAI = btn.dataset.ai;
 
-  fetch('/api/settings', {
+  updateCaptureButtons();
+
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ OCR_MODE: currentAI })
+    });
+  } catch (e) {
+    showToast('Mode selected locally; settings could not be saved');
+  }
+
+  showToast(`AI: ${btn.textContent.trim()}`);
+});
+
+async function sendCapture(base64Image, strategy) {
+  const res = await fetch('/api/accept', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ OCR_MODE: currentMode })
+    body: JSON.stringify({ image: base64Image, mode: currentAI, groq_strategy: strategy })
   });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || 'Server error');
+  }
+  return res.json();
+}
 
-  showToast(`Mode: ${btn.textContent.trim()}`);
-});
+function showAnswer(result) {
+  answerPanel.classList.add('visible');
+
+  if (!result.detected) {
+    answerContent.innerHTML = '<div class="no-question">No question detected. Reposition and try again.</div>';
+    return;
+  }
+
+  const typeBadge = result.type === 'MCQ'
+    ? '<span class="badge mcq">MCQ</span>'
+    : '<span class="badge essay">ESSAY</span>';
+
+  let providerBadge = '';
+  const provider = result.provider || result.mode_used || '';
+  const answerMode = result.answer_mode || '';
+
+  if (provider.includes('groq')) {
+    if (answerMode === 'verified') {
+      if (result.search_used) {
+        providerBadge = '<span class="badge gemini_search">WEB VERIFIED</span>';
+      } else if (result.fallback_reason || result.search_error) {
+        providerBadge = '<span class="badge not_verified">NOT WEB VERIFIED</span>';
+      } else {
+        providerBadge = '<span class="badge gemini_search">WEB VERIFIED</span>';
+      }
+    } else {
+      providerBadge = '<span class="badge gemini_search">QUICK ANSWER</span>';
+    }
+  } else if (provider.includes('gemini')) {
+    providerBadge = '<span class="badge gemini">GEMINI</span>';
+  }
+
+  const timerBadge = result.response_time
+    ? `<span class="badge timer">${result.response_time}</span>`
+    : '';
+
+  let sourcesHtml = '';
+  if (result.sources && result.sources.length > 0) {
+    sourcesHtml = '<div style="margin-top:10px;font-size:11px;color:#888;">Sources: ';
+    sourcesHtml += result.sources.map((s, i) =>
+      `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none;">${escapeHtml(s.title || s.uri)}</a>`
+    ).join(' &middot; ');
+    sourcesHtml += '</div>';
+  }
+
+  const fallbackHtml = result.fallback_reason
+    ? `<div style="margin-top:6px;font-size:11px;color:#f59e0b;">${escapeHtml(result.fallback_reason)}</div>`
+    : '';
+
+  const answerClass = result.type === 'ESSAY' ? 'answer essay' : 'answer';
+
+  answerContent.innerHTML = `
+    ${typeBadge} ${providerBadge} ${timerBadge}
+    <div class="question">${escapeHtml(result.question)}</div>
+    <div class="answer-label">Answer</div>
+    <div class="${answerClass}">${escapeHtml(result.answer)}</div>
+    ${result.explanation ? `<div class="explanation">${escapeHtml(result.explanation)}</div>` : ''}
+    ${fallbackHtml}
+    ${sourcesHtml}
+  `;
+
+  if (result.provider) {
+    providerText.textContent = result.provider;
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
 
 settingsBtn.addEventListener('click', () => {
   loadSettings();
@@ -963,25 +1076,17 @@ saveSettings.addEventListener('click', async () => {
         GEMINI_API_KEY: apiKeyInput.value,
         GEMINI_API_KEY_2: apiKeyInput2.value,
         GEMINI_API_KEY_3: apiKeyInput3.value,
-        CAMERA_URL: cameraUrlInput.value,
-        OPENROUTER_API_KEY: openrouterKeyInput.value,
-        OPENROUTER_MODEL_1: openrouterModel1Input.value,
-        OPENROUTER_MODEL_2: openrouterModel2Input.value,
-        OLLAMA_MODEL: ollamaModelInput.value,
-        OLLAMA_URL: ollamaUrlInput.value
+        GEMINI_API_KEY_4: apiKeyInput4.value,
+        GEMINI_API_KEY_5: apiKeyInput5.value,
+        GROQ_API_KEY: groqKeyInput.value,
       })
     });
     settingsModal.classList.remove('open');
     showToast('Settings saved');
-    checkCamera();
   } catch (e) {
     showToast('Failed to save settings');
   }
 });
-
-startPhoneCamera();
-checkCamera();
-initMode();
 
 cooldownBtn.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -1057,6 +1162,24 @@ qrBtn.addEventListener('click', () => {
 });
 qrClose.addEventListener('click', () => qrModal.classList.remove('open'));
 qrModal.addEventListener('click', (e) => { if (e.target === qrModal) qrModal.classList.remove('open'); });
+
+// Init
+checkScreenStatus();
+
+// Restore the persisted tab; do not overwrite it with the JavaScript default.
+(async () => {
+  try {
+    const res = await fetch('/api/settings');
+    const settings = await res.json();
+    if (settings.OCR_MODE === 'groq_vision' || settings.OCR_MODE === 'gemini_vision') {
+      currentAI = settings.OCR_MODE;
+      aiBar.querySelectorAll('.ai-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.ai === currentAI);
+      });
+    }
+  } catch (e) {}
+  updateCaptureButtons();
+})();
 </script>
 </body>
 </html>
