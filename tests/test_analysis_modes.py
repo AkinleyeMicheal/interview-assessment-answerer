@@ -40,7 +40,7 @@ class AnalysisModeTests(unittest.TestCase):
             {"executed_tools": [{"type": "search", "output": "Source https://example.org/france"}]},
         )
 
-        result = gemini_client.analyze_image(b"not-used", "groq_vision")
+        result = gemini_client.analyze_image(b"not-used", "groq_vision", groq_strategy="verified")
 
         self.assertEqual(result["provider"], "groq_vision")
         self.assertEqual(result["answer"], "B. Paris")
@@ -61,7 +61,7 @@ class AnalysisModeTests(unittest.TestCase):
             ("QUESTION: 2 + 2?\nTYPE: MCQ\nOPTIONS: A. 3\nB. 4\nANSWER: B. 4\nEXPLANATION: Arithmetic.", {}),
         ]
 
-        result = gemini_client.analyze_image(b"not-used", "groq_vision")
+        result = gemini_client.analyze_image(b"not-used", "groq_vision", groq_strategy="verified")
 
         self.assertEqual(result["answer"], "B. 4")
         self.assertFalse(result["search_used"])

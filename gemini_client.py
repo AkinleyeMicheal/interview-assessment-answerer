@@ -15,9 +15,13 @@ from google.genai import types
 from config import get_active_gemini_key, get_settings, rotate_gemini_key
 
 
-GROQ_VISION_MODEL = "qwen/qwen3.6-27b"
+# Probed live against the active key (2026-09-25): qwen3.6-27b and compound-mini
+# return 404 for this key. qwen3.8-27b (vision, up to 3 images) and both
+# gpt-oss sizes respond correctly; Gemini 2.5 Flash confirmed as fallback.
+GROQ_VISION_MODEL = "qwen/qwen3.8-27b"
 GROQ_SEARCH_MODEL = "groq/compound-mini"
 GROQ_TEXT_FALLBACK_MODEL = "openai/gpt-oss-20b"
+GROQ_CODE_MODEL = "openai/gpt-oss-120b"
 
 
 GROQ_EXTRACTION_PROMPT = """Read this quiz screenshot and extract the question or instruction along with every visible answer option.

@@ -11,6 +11,8 @@ _settings = {
     "GEMINI_API_KEY_5": os.getenv("GEMINI_API_KEY_5", ""),
     "MODEL_NAME": os.getenv("MODEL_NAME", "gemini-3.8-flash"),
     "GROQ_API_KEY": os.getenv("GROQ_API_KEY", ""),
+    "ELEVENLABS_API_KEY": os.getenv("ELEVENLABS_API_KEY", ""),
+    "SEARXNG_URL": os.getenv("SEARXNG_URL", ""),
     "OCR_MODE": os.getenv("OCR_MODE", "groq_vision"),
     "SCREEN_REGION_LEFT": int(os.getenv("SCREEN_REGION_LEFT", "0")),
     "SCREEN_REGION_TOP": int(os.getenv("SCREEN_REGION_TOP", "0")),
@@ -27,10 +29,10 @@ def update_settings(updates: dict):
     allowed_keys = {
         "GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3",
         "GEMINI_API_KEY_4", "GEMINI_API_KEY_5",
-        "MODEL_NAME", "GROQ_API_KEY", "OCR_MODE", "SEARXNG_URL",
+        "MODEL_NAME", "GROQ_API_KEY", "ELEVENLABS_API_KEY", "OCR_MODE", "SEARXNG_URL",
         "SCREEN_REGION_LEFT", "SCREEN_REGION_TOP", "SCREEN_REGION_RIGHT", "SCREEN_REGION_BOTTOM",
     }
-    api_key_fields = {"GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3", "GEMINI_API_KEY_4", "GEMINI_API_KEY_5", "GROQ_API_KEY"}
+    api_key_fields = {"GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3", "GEMINI_API_KEY_4", "GEMINI_API_KEY_5", "GROQ_API_KEY", "ELEVENLABS_API_KEY"}
     for key, value in updates.items():
         if key in allowed_keys and value is not None:
             if key in api_key_fields and value == "":

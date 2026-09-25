@@ -1,9 +1,10 @@
 import base64
 import logging
+import queue
 import time
 import traceback
 import threading
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
@@ -29,10 +30,66 @@ from gemini_client import (
     get_provider_status,
 )
 from screen_capture import ScreenCapture
+from interview_session import session
+from elevenlabs_client import check_elevenlabs_status
+from overlay_window import OVERLAY_URL, get_overlay
 
 app = FastAPI(title="Quizbox AI")
 
 screen = ScreenCapture()
+# Interview screen fusion reads frames from the same capture the stream uses.
+session.frame_provider = screen.get_latest_jpeg
+
+# Desktop overlay pane (Mirror tab).  Controller is inert until first use;
+# every state change is broadcast to all WS clients as `overlay_state`.
+overlay = get_overlay()
+overlay.url = OVERLAY_URL
+overlay.on_state = lambda st: session.emit({"type": "overlay_state", **st})
+
+# Last tab a client reported — sent in the WS hello so a freshly opened
+# overlay pane starts on the same tab as the phone.
+_current_tab = {"tab": "groq_vision"}
+
+_pump_task = None
+
+
+@app.on_event("startup")
+async def _start_interview_pump():
+    import asyncio
+
+    session.start()
+
+    async def pump():
+        import asyncio as _asyncio
+        while True:
+            message = None
+            try:
+                message = session.out_queue.get_nowait()
+            except queue.Empty:
+                pass
+            if message is not None:
+                dead = []
+                for ws in list(session.clients):
+                    try:
+                        await ws.send_json(message)
+                    except Exception:
+                        dead.append(ws)
+                for ws in dead:
+                    session.clients.discard(ws)
+            await _asyncio.sleep(0.03)
+
+    global _pump_task
+    _pump_task = asyncio.create_task(pump())
+
+
+@app.on_event("shutdown")
+async def _stop_interview_pump():
+    if _pump_task:
+        _pump_task.cancel()
+    session.shutdown()
+    # NOTE: overlay is deliberately NOT stopped here — its GUI/hotkey threads
+    # are daemons (released at process exit) and TestClient shutdowns must
+    # not poison the module singleton for later tests.
 
 
 class CaptureRequest(BaseModel):
@@ -49,6 +106,7 @@ class SettingsRequest(BaseModel):
     GEMINI_API_KEY_5: str | None = None
     MODEL_NAME: str | None = None
     GROQ_API_KEY: str | None = None
+    ELEVENLABS_API_KEY: str | None = None
     OCR_MODE: str | None = None
     SEARXNG_URL: str | None = None
     SCREEN_REGION_LEFT: int | None = None
@@ -139,6 +197,275 @@ async def rotate_gemini_key_route():
 @app.get("/api/gemini-key/status")
 async def gemini_key_status_route():
     return get_gemini_key_status()
+
+
+# ---------------------------------------------------------------------------
+# Interview mode: WebSocket + REST
+# ---------------------------------------------------------------------------
+
+
+class MockStartRequest(BaseModel):
+    mic_source: str = "desktop"
+    role: str = "software engineer"
+    level: str = "mid-level"
+
+
+@app.get("/api/interview/status")
+async def interview_status():
+    return {
+        **session.status(),
+        "elevenlabs": check_elevenlabs_status(),
+    }
+
+
+@app.post("/api/interview/live/start")
+async def interview_live_start():
+    import asyncio
+    result = await asyncio.get_event_loop().run_in_executor(None, session.start_live)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to start"))
+    return result
+
+
+@app.post("/api/interview/live/stop")
+async def interview_live_stop():
+    import asyncio
+    return await asyncio.get_event_loop().run_in_executor(None, session.stop_live)
+
+
+@app.post("/api/interview/mock/start")
+async def interview_mock_start(req: MockStartRequest):
+    import asyncio
+    result = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: session.start_mock(req.mic_source, req.role, req.level)
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to start"))
+    return result
+
+
+@app.post("/api/interview/mock/stop")
+async def interview_mock_stop():
+    import asyncio
+    return await asyncio.get_event_loop().run_in_executor(None, session.stop_mock)
+
+
+@app.post("/api/interview/mock/next")
+async def interview_mock_next():
+    return session.skip_mock_question()
+
+
+async def _overlay_call(method: str, *args, **kwargs):
+    """Run an OverlayController command on its GUI thread and return the state."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(
+            None,
+            lambda: overlay.submit(getattr(overlay, method), *args, **kwargs).result(timeout=8),
+        )
+    except Exception as exc:
+        log.error("overlay %s failed: %s", method, exc)
+        return {"ok": False, "error": str(exc)}
+
+
+@app.websocket("/ws/interview")
+async def ws_interview(websocket: WebSocket):
+    await websocket.accept()
+    session.clients.add(websocket)
+    try:
+        await websocket.send_json({
+            "type": "status",
+            "state": session.mode or "idle",
+            "provider": session.router.active,
+            "overlay": overlay.status(),
+            "tab": _current_tab["tab"],
+            "ts": time.time(),
+        })
+        while True:
+            data = await websocket.receive_json()
+            action = data.get("action")
+
+            if action == "start_live":
+                import asyncio
+                result = await asyncio.get_event_loop().run_in_executor(None, session.start_live)
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "stop_live":
+                import asyncio
+                result = await asyncio.get_event_loop().run_in_executor(None, session.stop_live)
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "start_mock":
+                import asyncio
+                mic_source = data.get("mic_source", "desktop")
+                role = data.get("role", "software engineer")
+                level = data.get("level", "mid-level")
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: session.start_mock(mic_source, role, level)
+                )
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "stop_mock":
+                import asyncio
+                result = await asyncio.get_event_loop().run_in_executor(None, session.stop_mock)
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "skip_question":
+                result = session.skip_mock_question()
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "answer_done":
+                import asyncio
+                result = await asyncio.get_event_loop().run_in_executor(None, session.finish_mock_answer)
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "solve_screen":
+                import asyncio
+                image = data.get("image")
+                variant = data.get("variant", "solve")
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: session.solve_screen(image_b64=image, variant=variant, auto=False)
+                )
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "next_step":
+                import asyncio
+                image = data.get("image")
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: session.solve_screen(image_b64=image, variant="next_step", auto=False)
+                )
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "set_auto_assist":
+                result = session.set_auto_assist(bool(data.get("enabled", True)))
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "stash_capture":
+                slot = data.get("slot", "problem")
+                result = session.stash_capture(slot)
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "stash_clear":
+                result = session.stash_clear(data.get("slot"))
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "add_segment":
+                result = session.add_segment(data.get("image"))
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "context_status":
+                await websocket.send_json({
+                    "type": "action_result", "action": action, "ok": True,
+                    "context": session.context_status(),
+                })
+
+            elif action == "set_provider":
+                result = session.set_provider(data.get("provider", ""))
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "provider_status":
+                await websocket.send_json({
+                    "type": "action_result", "action": action, "ok": True,
+                    **session.provider_status(),
+                })
+
+            # ---- overlay pane (Mirror tab) -----------------------------
+            elif action == "overlay_open":
+                result = await _overlay_call("open")
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_close":
+                result = await _overlay_call("close")
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_toggle":
+                result = await _overlay_call("toggle")
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_move":
+                result = await _overlay_call(
+                    "move_by", int(data.get("dx", 0)), int(data.get("dy", 0))
+                )
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_resize":
+                result = await _overlay_call(
+                    "resize",
+                    int(data.get("w", overlay.status()["w"])),
+                    int(data.get("h", overlay.status()["h"])),
+                )
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_step":
+                result = await _overlay_call(
+                    "step", str(data.get("axis", "w")), int(data.get("delta", 40))
+                )
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_preset":
+                result = await _overlay_call("preset", str(data.get("name", "standard")))
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_center":
+                result = await _overlay_call("center")
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_zoom":
+                result = await _overlay_call("zoom_step", float(data.get("delta", 0.1)))
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_opacity":
+                result = await _overlay_call("opacity_step", float(data.get("delta", 0.1)))
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_click_through":
+                result = await _overlay_call("set_click_through", bool(data.get("enabled", True)))
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_hide":
+                enabled = data.get("enabled")
+                result = await _overlay_call(
+                    "set_hidden", None if enabled is None else bool(enabled)
+                )
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
+
+            elif action == "overlay_status":
+                await websocket.send_json({
+                    "type": "action_result", "action": action, "ok": True,
+                    **overlay.status(),
+                })
+
+            # ---- cross-client tab sync (phone <-> overlay pane) --------
+            elif action == "sync_tab":
+                tab = data.get("tab")
+                if tab in {"groq_vision", "gemini_vision", "interview", "mirror"}:
+                    _current_tab["tab"] = tab
+                    session.emit({"type": "tab_changed", "tab": tab})
+                    await websocket.send_json({"type": "action_result", "action": action, "ok": True})
+                else:
+                    await websocket.send_json({
+                        "type": "action_result", "action": action, "ok": False,
+                        "error": f"Unknown tab: {tab!r}",
+                    })
+
+            elif action == "mic_audio":
+                session.handle_phone_mic_audio(data.get("data", ""))
+
+            elif action == "ping":
+                await websocket.send_json({"type": "pong", "ts": time.time()})
+
+            else:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Unknown action: {action}",
+                })
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        log.error("WebSocket error: %s", exc)
+    finally:
+        session.clients.discard(websocket)
 
 
 @app.get("/stream")
@@ -334,7 +661,8 @@ async def select_screen_region():
         return result_box[0]
 
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, do_select)
+    # Qt runs on the overlay GUI thread (single QApplication owner).
+    result = await loop.run_in_executor(None, lambda: overlay.submit(do_select).result(timeout=120))
 
     if result is None:
         return {"selected": False, "message": "Selection cancelled"}

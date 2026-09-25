@@ -514,6 +514,408 @@ body {
   font-weight: 600;
   cursor: pointer;
 }
+
+/* ---------------- Interview mode ---------------- */
+.interview-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #0a0a0a;
+}
+.interview-subtabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #0d0d0d;
+  border-bottom: 1px solid #1a1a1a;
+  flex-shrink: 0;
+}
+.subtab {
+  padding: 6px 16px;
+  border: 1px solid #333;
+  border-radius: 20px;
+  background: transparent;
+  color: #888;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.subtab.active {
+  background: #4ade80;
+  color: #000;
+  border-color: #4ade80;
+  font-weight: 600;
+}
+.interview-conn {
+  margin-left: auto;
+  font-size: 10px;
+  color: #555;
+}
+.interview-conn.ok { color: #4ade80; }
+.interview-conn.bad { color: #ef4444; }
+
+.interview-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: #999;
+  background: #0d0d0d;
+  border-bottom: 1px solid #151515;
+  flex-shrink: 0;
+}
+.status-dot.pulse { background: #f59e0b; animation: ivPulse 1s infinite; }
+@keyframes ivPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.interview-history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  -webkit-overflow-scrolling: touch;
+}
+.iv-empty {
+  color: #444;
+  font-size: 13px;
+  text-align: center;
+  margin-top: 40px;
+  line-height: 1.6;
+}
+.iv-msg { max-width: 92%; }
+.iv-msg .iv-role {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #666;
+  margin-bottom: 4px;
+}
+.iv-msg .iv-bubble {
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.iv-msg.interviewer { align-self: flex-start; }
+.iv-msg.interviewer .iv-bubble { background: #161616; border: 1px solid #262626; color: #ddd; }
+.iv-msg.candidate { align-self: flex-end; margin-left: auto; text-align: right; }
+.iv-msg.candidate .iv-role { text-align: right; }
+.iv-msg.candidate .iv-bubble {
+  background: #052e16;
+  border: 1px solid #14532d;
+  color: #d1fae5;
+  text-align: left;
+}
+.iv-msg.evaluator { align-self: stretch; max-width: 100%; }
+.iv-msg.evaluator .iv-bubble {
+  background: #101010;
+  border: 1px solid #2a2a2a;
+  color: #ccc;
+}
+.iv-score {
+  display: inline-block;
+  background: #4ade80;
+  color: #000;
+  font-weight: 700;
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin-bottom: 6px;
+}
+.iv-score.low { background: #ef4444; color: #fff; }
+.iv-score.mid { background: #f59e0b; color: #000; }
+.iv-improved {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #333;
+  font-size: 13px;
+  color: #a5b4fc;
+}
+.iv-done { background: #4ade80; color: #000; font-weight: 600; }
+.iv-solve { background: #1d4ed8; color: #fff; }
+.iv-next { background: #4338ca; color: #fff; }
+.iv-auto { background: #1f2937; color: #4ade80; }
+.iv-auto.off { color: #888; }
+.iv-code-wrap { margin-top: 8px; text-align: left; }
+.iv-code-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.iv-copy {
+  background: #222;
+  border: 1px solid #333;
+  color: #aaa;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.iv-code {
+  background: #0b0b0b;
+  border: 1px solid #262626;
+  border-radius: 8px;
+  padding: 8px;
+  font-family: Consolas, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #a7f3d0;
+  overflow-x: auto;
+  white-space: pre;
+  text-align: left;
+  margin: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.iv-steps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: #93c5fd;
+  text-align: left;
+}
+.iv-steps li { margin-bottom: 3px; }
+
+.interview-caption {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: #f59e0b;
+  background: #0d0d0d;
+  border-top: 1px solid #1a1a1a;
+  min-height: 34px;
+  max-height: 60px;
+  overflow-y: auto;
+  flex-shrink: 0;
+  font-style: italic;
+}
+
+.interview-controls {
+  padding: 10px 12px;
+  background: #111;
+  border-top: 1px solid #222;
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.iv-btn {
+  flex: 1;
+  padding: 14px 10px;
+  font-size: 14px;
+  border-radius: 10px;
+}
+.iv-start { background: #16a34a; color: #fff; }
+.iv-stop { background: #7f1d1d; color: #fecaca; }
+.iv-skip { background: #222; color: #aaa; }
+.iv-screen { background: #1f2937; color: #93c5fd; font-size: 13px; padding: 10px; }
+#screenControls { flex-wrap: wrap; }
+.iv-provider { background: #3b0764; color: #c4b5fd; font-size: 13px; padding: 10px; font-weight: 600; }
+.iv-provider[data-active="gemini"] { background: #1e3a5f; color: #7dd3fc; }
+.iv-capture { background: #1f2937; color: #86efac; font-size: 13px; padding: 10px; }
+.iv-context-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px 10px;
+  background: #111;
+  border-top: 1px solid #1a1a1a;
+}
+.iv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #052e16;
+  border: 1px solid #166534;
+  color: #86efac;
+  font-size: 11px;
+  padding: 5px 8px;
+  border-radius: 999px;
+}
+.iv-chip b { color: #4ade80; font-weight: 600; }
+.iv-chip i {
+  font-style: normal;
+  cursor: pointer;
+  color: #6ee7b7;
+  font-weight: 700;
+  padding: 0 2px;
+}
+.iv-chip i:hover { color: #f87171; }
+
+.mock-options {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 8px;
+}
+#mockControls { flex-direction: column; }
+.mock-actions { display: flex; gap: 8px; }
+.mock-select, .mock-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  background: #161616;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: #ccc;
+  font-size: 12px;
+}
+.mock-input::placeholder { color: #555; }
+
+.iv-screen-preview {
+  position: fixed;
+  right: 10px;
+  bottom: 150px;
+  width: 42vw;
+  max-width: 220px;
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  overflow: hidden;
+  z-index: 60;
+  background: #000;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+}
+.iv-screen-preview img { width: 100%; display: block; }
+.iv-preview-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+/* ---- mirror (desktop overlay) panel ------------------------------- */
+.mirror-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #0a0a0a;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.mirror-status {
+  padding: 10px 16px;
+  font-size: 12px;
+  color: #999;
+  background: #0d0d0d;
+  border-bottom: 1px solid #151515;
+}
+.mirror-status.on { color: #4ade80; }
+.mirror-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #111;
+  border-bottom: 1px solid #222;
+}
+.mirror-hide { background: #78350f; color: #fcd34d; }
+.mirror-drag {
+  margin: 12px;
+  padding: 22px 12px;
+  border: 1px dashed #333;
+  border-radius: 12px;
+  background: #0d0d0d;
+  text-align: center;
+  color: #6b7280;
+  font-size: 14px;
+  user-select: none;
+  touch-action: none;
+  cursor: grab;
+}
+.mirror-drag:active { cursor: grabbing; border-color: #4ade80; color: #4ade80; }
+.mirror-drag small { display: block; margin-top: 6px; color: #444; font-size: 11px; }
+.mirror-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0 12px;
+}
+.mirror-cell {
+  background: #0d0d0d;
+  border: 1px solid #1f1f1f;
+  border-radius: 10px;
+  padding: 10px;
+}
+.mirror-cell label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #666;
+  margin-bottom: 8px;
+}
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.stepper button {
+  flex: 0 0 40px;
+  height: 36px;
+  font-size: 18px;
+  font-weight: 700;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #161616;
+  color: #4ade80;
+  cursor: pointer;
+}
+.stepper button:active { background: #14532d; transform: scale(0.95); }
+.stepper span {
+  flex: 1;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e7eb;
+  font-variant-numeric: tabular-nums;
+}
+.mirror-presets {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+}
+.mirror-presets button, .mirror-toggles button {
+  flex: 1;
+  padding: 10px 6px;
+  font-size: 12px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #161616;
+  color: #9ca3af;
+  cursor: pointer;
+}
+.mirror-presets button:active, .mirror-toggles button:active { background: #222; color: #4ade80; }
+.mirror-toggles { display: flex; gap: 8px; padding: 0 12px 14px; }
+.mirror-toggles button.ct-on { color: #4ade80; border-color: #14532d; }
+
+/* ---- desktop overlay display variant (?display=overlay) ----------- */
+body.display-overlay { font-size: 17px; }
+body.display-overlay .answer-panel,
+body.display-overlay .interview-panel,
+body.display-overlay .mirror-panel { max-width: none; }
+body.display-overlay .iv-msg { max-width: 80%; }
+body.display-overlay .iv-bubble { font-size: 16px; }
+body.display-overlay .header h1 { font-size: 20px; }
 </style>
 </head>
 <body>
@@ -530,6 +932,8 @@ body {
 <div class="ai-bar" id="aiBar">
   <button class="ai-btn active" data-ai="groq_vision">Groq Vision</button>
   <button class="ai-btn" data-ai="gemini_vision">Gemini Vision</button>
+  <button class="ai-btn" data-ai="interview">Interview</button>
+  <button class="ai-btn" data-ai="mirror">Mirror</button>
 </div>
 
 <div class="status-bar">
@@ -550,6 +954,128 @@ body {
 
 <div class="answer-panel" id="answerPanel">
   <div id="answerContent"></div>
+</div>
+
+<div class="interview-panel" id="interviewPanel" style="display:none;">
+  <div class="interview-subtabs">
+    <button class="subtab active" data-sub="live">Live</button>
+    <button class="subtab" data-sub="mock">Mock</button>
+    <div class="interview-conn" id="interviewConn">connecting...</div>
+  </div>
+
+  <div class="interview-status" id="interviewStatus">
+    <span class="status-dot off" id="ivStatusDot"></span>
+    <span id="ivStatusText">Select Live or Mock and press Start</span>
+  </div>
+
+  <div class="interview-history" id="interviewHistory">
+    <div class="iv-empty" id="ivEmpty">Start a session to see the conversation here.</div>
+  </div>
+
+  <div class="interview-caption" id="interviewCaption" style="display:none;"></div>
+
+  <div class="interview-controls" id="liveControls">
+    <button class="btn iv-btn iv-start" id="liveStartBtn">Start Live Interview</button>
+    <button class="btn iv-btn iv-stop" id="liveStopBtn" style="display:none;">Stop</button>
+  </div>
+
+  <div class="interview-controls" id="mockControls" style="display:none;">
+    <div class="mock-options">
+      <select id="mockMicSelect" class="mock-select">
+        <option value="desktop">Desktop Mic</option>
+        <option value="phone">Phone Mic</option>
+      </select>
+      <input type="text" id="mockRoleInput" class="mock-input" placeholder="Role (e.g. backend engineer)">
+      <select id="mockLevelSelect" class="mock-select">
+        <option value="entry-level">Entry</option>
+        <option value="mid-level" selected>Mid</option>
+        <option value="senior">Senior</option>
+      </select>
+    </div>
+    <div class="mock-actions">
+      <button class="btn iv-btn iv-start" id="mockStartBtn">Start Mock Interview</button>
+      <button class="btn iv-btn iv-stop" id="mockStopBtn" style="display:none;">Stop</button>
+      <button class="btn iv-btn iv-skip" id="mockSkipBtn" style="display:none;">Skip</button>
+      <button class="btn iv-btn iv-done" id="mockDoneBtn" style="display:none;">Done</button>
+    </div>
+  </div>
+
+  <div class="interview-controls" id="screenControls">
+    <button class="btn iv-btn iv-provider" id="ivProviderBtn" data-active="groq" title="Switch the model answering questions">Groq</button>
+    <button class="btn iv-btn iv-screen" id="ivSelectRegionBtn">Select Region</button>
+    <button class="btn iv-btn iv-screen" id="ivCaptureBtn">Quick Capture</button>
+    <button class="btn iv-btn iv-solve" id="ivSolveBtn">Solve</button>
+    <button class="btn iv-btn iv-next" id="ivNextBtn">Next Step</button>
+    <button class="btn iv-btn iv-auto" id="ivAutoAssistBtn">Auto: On</button>
+    <button class="btn iv-btn iv-capture" id="ivProblemBtn" title="Copy the problem with your keyboard, then tap">Problem</button>
+    <button class="btn iv-btn iv-capture" id="ivCodeBtn" title="Copy the starter code with your keyboard, then tap">Code</button>
+    <button class="btn iv-btn iv-capture" id="ivSegmentBtn" title="Scroll the problem, then tap to stack a screenshot">+ Segment</button>
+  </div>
+  <div class="iv-context-bar" id="ivContextBar" style="display:none;">
+    <span class="iv-chip" id="ivChipProblem" style="display:none;">Problem <b id="ivChipProblemLen">0</b> <i title="Clear">&times;</i></span>
+    <span class="iv-chip" id="ivChipCode" style="display:none;">Code <b id="ivChipCodeLen">0</b> <i title="Clear">&times;</i></span>
+    <span class="iv-chip" id="ivChipSeg" style="display:none;">Segments <b id="ivChipSegLen">0</b> <i title="Clear">&times;</i></span>
+  </div>
+  <div class="iv-screen-preview" id="ivScreenPreview" style="display:none;">
+    <img id="ivPreviewImg" alt="Screen preview">
+    <button class="iv-preview-close" id="ivPreviewClose">&times;</button>
+  </div>
+</div>
+
+<div class="mirror-panel" id="mirrorPanel" style="display:none;">
+  <div class="mirror-status" id="mirrorStatus">Pane closed</div>
+  <div class="mirror-actions">
+    <button class="btn iv-btn iv-start" id="mirrorOpenBtn">Open Pane</button>
+    <button class="btn iv-btn iv-stop" id="mirrorCloseBtn" style="display:none;">Close Pane</button>
+    <button class="btn iv-btn iv-stop mirror-hide" id="mirrorHideBtn" style="display:none;">Hide</button>
+  </div>
+  <div class="mirror-drag" id="mirrorDrag">
+    &#10302;&#10302; Drag to move the pane &#10302;&#10302;
+    <small id="mirrorPos">(0, 0)</small>
+  </div>
+  <div class="mirror-grid">
+    <div class="mirror-cell">
+      <label>Width &plusmn;40px</label>
+      <div class="stepper">
+        <button id="mirrorWMinus">&minus;</button>
+        <span id="mirrorWVal">640</span>
+        <button id="mirrorWPlus">+</button>
+      </div>
+    </div>
+    <div class="mirror-cell">
+      <label>Height &plusmn;40px</label>
+      <div class="stepper">
+        <button id="mirrorHMinus">&minus;</button>
+        <span id="mirrorHVal">800</span>
+        <button id="mirrorHPlus">+</button>
+      </div>
+    </div>
+    <div class="mirror-cell">
+      <label>Zoom</label>
+      <div class="stepper">
+        <button id="mirrorZoomMinus">&minus;</button>
+        <span id="mirrorZoomVal">1.0&times;</span>
+        <button id="mirrorZoomPlus">+</button>
+      </div>
+    </div>
+    <div class="mirror-cell">
+      <label>Opacity</label>
+      <div class="stepper">
+        <button id="mirrorOpMinus">&minus;</button>
+        <span id="mirrorOpVal">100%</span>
+        <button id="mirrorOpPlus">+</button>
+      </div>
+    </div>
+  </div>
+  <div class="mirror-presets">
+    <button class="mirror-preset" data-preset="tiny">Tiny</button>
+    <button class="mirror-preset" data-preset="compact">Compact</button>
+    <button class="mirror-preset" data-preset="standard">Standard</button>
+    <button id="mirrorCenterBtn">Center</button>
+  </div>
+  <div class="mirror-toggles">
+    <button id="mirrorClickBtn" class="ct-on">Click-through: On</button>
+  </div>
 </div>
 
 <div class="controls">
@@ -661,6 +1187,7 @@ const rotateKeyBtn = document.getElementById('rotateKeyBtn');
 let answerCount = 0;
 let isProcessing = false;
 let currentAI = 'groq_vision';
+let appMode = 'quiz';
 let streamActive = false;
 let streamGeneration = 0;
 let displayedFrameUrl = null;
@@ -806,10 +1333,11 @@ function activateStream() {
 }
 
 function updateCaptureButtons() {
+  const interviewMode = appMode === 'interview';
   const groqActive = currentAI === 'groq_vision';
-  captureQuickBtn.style.display = groqActive ? '' : 'none';
-  captureVerifiedBtn.style.display = groqActive ? '' : 'none';
-  captureBtn.style.display = groqActive ? 'none' : '';
+  captureQuickBtn.style.display = (interviewMode || !groqActive) ? 'none' : '';
+  captureVerifiedBtn.style.display = (interviewMode || !groqActive) ? 'none' : '';
+  captureBtn.style.display = (interviewMode || groqActive) ? 'none' : '';
 
   if (!streamActive) {
     captureQuickBtn.disabled = true;
@@ -845,6 +1373,10 @@ async function pullLatestFrames(generation) {
         streamPreview.onerror = reject;
         streamPreview.src = nextUrl;
       });
+
+      if (ivPreviewImg.offsetParent !== null) {
+        ivPreviewImg.src = nextUrl;
+      }
 
       if (generation !== streamGeneration) {
         URL.revokeObjectURL(nextUrl);
@@ -947,12 +1479,19 @@ async function handleCapture(strategy) {
 aiBar.addEventListener('click', async (e) => {
   const btn = e.target.closest('.ai-btn');
   if (!btn) return;
+  const target = btn.dataset.ai;
+  applyTabLocally(target);
 
-  aiBar.querySelectorAll('.ai-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  currentAI = btn.dataset.ai;
-
-  updateCaptureButtons();
+  if (target === 'interview') {
+    showToast('Interview mode');
+    sendTabSync(target);
+    return;
+  }
+  if (target === 'mirror') {
+    showToast('Mirror controls');
+    sendTabSync(target);
+    return;
+  }
 
   try {
     await fetch('/api/settings', {
@@ -965,6 +1504,7 @@ aiBar.addEventListener('click', async (e) => {
   }
 
   showToast(`AI: ${btn.textContent.trim()}`);
+  sendTabSync(target);
 });
 
 async function sendCapture(base64Image, strategy) {
@@ -981,6 +1521,12 @@ async function sendCapture(base64Image, strategy) {
 }
 
 function showAnswer(result) {
+  if (appMode === 'interview') {
+    ivAddScreenResult(result);
+    answerCount++;
+    countText.textContent = `${answerCount} answered`;
+    return;
+  }
   answerPanel.classList.add('visible');
 
   if (!result.detected) {
@@ -1163,7 +1709,731 @@ qrBtn.addEventListener('click', () => {
 qrClose.addEventListener('click', () => qrModal.classList.remove('open'));
 qrModal.addEventListener('click', (e) => { if (e.target === qrModal) qrModal.classList.remove('open'); });
 
+// ========================= INTERVIEW MODE =========================
+const cameraArea = document.getElementById('cameraArea');
+const controlsDiv = document.querySelector('.controls');
+const interviewPanel = document.getElementById('interviewPanel');
+const interviewConn = document.getElementById('interviewConn');
+const ivStatusDot = document.getElementById('ivStatusDot');
+const ivStatusText = document.getElementById('ivStatusText');
+const interviewHistory = document.getElementById('interviewHistory');
+const ivEmpty = document.getElementById('ivEmpty');
+const interviewCaption = document.getElementById('interviewCaption');
+const liveControls = document.getElementById('liveControls');
+const mockControls = document.getElementById('mockControls');
+const liveStartBtn = document.getElementById('liveStartBtn');
+const liveStopBtn = document.getElementById('liveStopBtn');
+const mockStartBtn = document.getElementById('mockStartBtn');
+const mockStopBtn = document.getElementById('mockStopBtn');
+const mockSkipBtn = document.getElementById('mockSkipBtn');
+const mockDoneBtn = document.getElementById('mockDoneBtn');
+const ivSolveBtn = document.getElementById('ivSolveBtn');
+const ivNextBtn = document.getElementById('ivNextBtn');
+const ivAutoAssistBtn = document.getElementById('ivAutoAssistBtn');
+const mockMicSelect = document.getElementById('mockMicSelect');
+const mockRoleInput = document.getElementById('mockRoleInput');
+const mockLevelSelect = document.getElementById('mockLevelSelect');
+const ivSelectRegionBtn = document.getElementById('ivSelectRegionBtn');
+const ivCaptureBtn = document.getElementById('ivCaptureBtn');
+const ivScreenPreview = document.getElementById('ivScreenPreview');
+const ivPreviewImg = document.getElementById('ivPreviewImg');
+const ivPreviewClose = document.getElementById('ivPreviewClose');
+const ivProviderBtn = document.getElementById('ivProviderBtn');
+const ivProblemBtn = document.getElementById('ivProblemBtn');
+const ivCodeBtn = document.getElementById('ivCodeBtn');
+const ivSegmentBtn = document.getElementById('ivSegmentBtn');
+const ivContextBar = document.getElementById('ivContextBar');
+const ivChipProblem = document.getElementById('ivChipProblem');
+const ivChipProblemLen = document.getElementById('ivChipProblemLen');
+const ivChipCode = document.getElementById('ivChipCode');
+const ivChipCodeLen = document.getElementById('ivChipCodeLen');
+const ivChipSeg = document.getElementById('ivChipSeg');
+const ivChipSegLen = document.getElementById('ivChipSegLen');
+
+let ivWs = null;
+let ivWsReady = false;
+let ivReconnectDelay = 1000;
+let ivPingTimer = null;
+let ivSubTab = 'live';
+let ivSession = null; // 'live' | 'mock' | null
+let ivMockState = null; // asking|speaking|listening|committing|evaluating|null
+let ivAutoAssist = true;
+let phoneMic = null;
+let ivCtx = { problem: 0, code: 0, segments: 0 }; // stashed context lengths
+let ivCtxPreview = { problem: '', code: '' };
+
+// ---- desktop overlay (Mirror tab) ---------------------------------
+const isOverlayDisplay =
+  new URLSearchParams(location.search).get('display') === 'overlay';
+if (isOverlayDisplay) document.body.classList.add('display-overlay');
+
+const mirrorPanel = document.getElementById('mirrorPanel');
+const mirrorStatus = document.getElementById('mirrorStatus');
+const mirrorOpenBtn = document.getElementById('mirrorOpenBtn');
+const mirrorCloseBtn = document.getElementById('mirrorCloseBtn');
+const mirrorHideBtn = document.getElementById('mirrorHideBtn');
+const mirrorDrag = document.getElementById('mirrorDrag');
+const mirrorPos = document.getElementById('mirrorPos');
+const mirrorWVal = document.getElementById('mirrorWVal');
+const mirrorHVal = document.getElementById('mirrorHVal');
+const mirrorZoomVal = document.getElementById('mirrorZoomVal');
+const mirrorOpVal = document.getElementById('mirrorOpVal');
+const mirrorClickBtn = document.getElementById('mirrorClickBtn');
+
+let overlayState = {
+  open: false, hidden: false, x: 0, y: 0, w: 640, h: 800,
+  opacity: 1.0, zoom: 1.0, click_through: true,
+};
+
+function renderOverlayState(st) {
+  overlayState = Object.assign({}, overlayState, st);
+  const s = overlayState;
+  mirrorOpenBtn.style.display = s.open ? 'none' : '';
+  mirrorCloseBtn.style.display = s.open ? '' : 'none';
+  mirrorHideBtn.style.display = s.open ? '' : 'none';
+  mirrorHideBtn.textContent = s.hidden ? 'Show' : 'Hide';
+  mirrorStatus.textContent = !s.open
+    ? 'Pane closed'
+    : (s.hidden ? 'Pane hidden' : `Pane open — ${s.w}\u00d7${s.h} @ (${s.x},${s.y})`) +
+      ` \u00b7 ${Math.round(s.opacity * 100)}%` +
+      (s.click_through ? ' \u00b7 click-through' : ' \u00b7 interactive');
+  mirrorStatus.className = 'mirror-status' + (s.open && !s.hidden ? ' on' : '');
+  mirrorWVal.textContent = s.w;
+  mirrorHVal.textContent = s.h;
+  mirrorZoomVal.textContent = s.zoom.toFixed(1) + '\u00d7';
+  mirrorOpVal.textContent = Math.round(s.opacity * 100) + '%';
+  mirrorPos.textContent = `(${s.x}, ${s.y})`;
+  mirrorClickBtn.textContent = 'Click-through: ' + (s.click_through ? 'On' : 'Off');
+  mirrorClickBtn.classList.toggle('ct-on', s.click_through);
+}
+
+function sendTabSync(tab) {
+  if (isOverlayDisplay || !ivWsReady) return;
+  ivWs.send(JSON.stringify({ action: 'sync_tab', tab }));
+}
+
+function applyTabLocally(target) {
+  aiBar.querySelectorAll('.ai-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.ai === target));
+  if (target === 'interview') { setAppMode('interview'); return; }
+  if (target === 'mirror') { setAppMode('mirror'); return; }
+  currentAI = target;
+  setAppMode('quiz');
+  updateCaptureButtons();
+}
+
+function setAppMode(mode) {
+  appMode = mode;
+  const isIv = mode === 'interview';
+  const isMirror = mode === 'mirror';
+  const isQuiz = !isIv && !isMirror;
+  cameraArea.style.display = isQuiz ? '' : 'none';
+  controlsDiv.style.display = isQuiz ? '' : 'none';
+  answerPanel.style.display = isQuiz ? '' : 'none';
+  if (!isQuiz) answerPanel.classList.remove('visible');
+  interviewPanel.style.display = isIv ? 'flex' : 'none';
+  mirrorPanel.style.display = isMirror ? 'flex' : 'none';
+
+  if (isIv) {
+    ivConnect();
+    ivScreenPreview.style.display = streamActive ? 'block' : 'none';
+  } else if (isMirror) {
+    ivConnect();
+    ivScreenPreview.style.display = 'none';
+    if (ivWsReady) ivSend({ action: 'overlay_status' });
+  } else {
+    ivTeardown();
+    ivScreenPreview.style.display = 'none';
+    statusText.textContent = streamActive ? 'Screen capture active' : 'Ready';
+    statusDot.className = 'status-dot ' + (streamActive ? 'on' : 'off');
+  }
+  updateCaptureButtons();
+}
+
+// ---- WebSocket -------------------------------------------------------
+
+function ivConnect() {
+  if (ivWs && (ivWs.readyState === WebSocket.OPEN || ivWs.readyState === WebSocket.CONNECTING)) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  try {
+    ivWs = new WebSocket(`${proto}//${location.host}/ws/interview`);
+  } catch (e) {
+    interviewConn.textContent = 'connection failed';
+    interviewConn.className = 'interview-conn bad';
+    return;
+  }
+  ivWs.onopen = () => {
+    ivWsReady = true;
+    ivReconnectDelay = 1000;
+    interviewConn.textContent = 'connected';
+    interviewConn.className = 'interview-conn ok';
+    clearInterval(ivPingTimer);
+    ivPingTimer = setInterval(() => {
+      if (ivWsReady) ivWs.send(JSON.stringify({ action: 'ping' }));
+    }, 20000);
+    // restore provider label + stash chips after every (re)connect
+    ivWs.send(JSON.stringify({ action: 'provider_status' }));
+    ivWs.send(JSON.stringify({ action: 'context_status' }));
+    ivWs.send(JSON.stringify({ action: 'overlay_status' }));
+  };
+  ivWs.onmessage = (e) => {
+    try { ivHandleMessage(JSON.parse(e.data)); } catch (err) { console.error('WS parse', err); }
+  };
+  ivWs.onclose = () => {
+    ivWsReady = false;
+    clearInterval(ivPingTimer);
+    interviewConn.textContent = 'reconnecting...';
+    interviewConn.className = 'interview-conn bad';
+    // Always reconnect: the Mirror tab and tab-sync need a live socket.
+    setTimeout(ivConnect, ivReconnectDelay);
+    ivReconnectDelay = Math.min(Math.round(ivReconnectDelay * 1.6), 8000);
+  };
+  ivWs.onerror = () => {};
+}
+
+function ivTeardown() {
+  clearInterval(ivPingTimer);
+  ivPingTimer = null;
+  stopPhoneMic();
+  // The WebSocket stays up (tab sync + overlay control); only interview
+  // resources are torn down.
+}
+
+function ivSend(obj) {
+  if (ivWsReady) {
+    ivWs.send(JSON.stringify(obj));
+    return true;
+  }
+  showToast('Not connected to server');
+  return false;
+}
+
+// ---- message handling ------------------------------------------------
+
+function ivHandleMessage(msg) {
+  switch (msg.type) {
+    case 'status':
+      ivSetStatus(msg);
+      if (msg.overlay) renderOverlayState(msg.overlay);
+      // The pane boots onto the phone's last tab; the phone itself ignores
+      // this (it restores its own persisted tab below).
+      if (msg.tab && isOverlayDisplay) applyTabLocally(msg.tab);
+      break;
+    case 'overlay_state':
+      renderOverlayState(msg);
+      break;
+    case 'tab_changed':
+      applyTabLocally(msg.tab);
+      break;
+    case 'transcript':
+      if (msg.final) {
+        ivAddEntry('interviewer', msg.text);
+        ivHideCaption();
+      } else {
+        ivShowCaption('🎙 ' + msg.text);
+      }
+      break;
+    case 'answer':
+      ivAddEntry('candidate', msg.answer);
+      ivHideCaption();
+      break;
+    case 'mock_partial':
+      if (!msg.final) ivShowCaption('🎤 ' + msg.text);
+      break;
+    case 'mock_user_answer':
+      ivAddEntry('candidate', msg.text);
+      ivHideCaption();
+      break;
+    case 'mock_question':
+      ivAddEntry('interviewer', `Q${msg.question_number}. ${msg.question}`);
+      break;
+    case 'mock_feedback':
+      ivAddFeedback(msg);
+      break;
+    case 'screen_solve':
+      ivAddScreenSolve(msg);
+      break;
+    case 'provider_changed':
+      ivSetProviderLabel(msg.active);
+      if (msg.reason === 'fallback') {
+        showToast('Model unavailable — switched to ' + ivProviderLabel(msg.active));
+      }
+      break;
+    case 'context_update':
+      ivRenderContext(msg.context);
+      break;
+    case 'history':
+      break;
+    case 'error':
+      showToast(msg.message || 'Interview error');
+      break;
+    case 'action_result':
+      ivHandleActionResult(msg);
+      break;
+  }
+}
+
+const IV_STATE_LABELS = {
+  idle: 'Select Live or Mock and press Start',
+  listening: 'Listening...',
+  processing: 'Generating answer...',
+  thinking: 'Generating question...',
+  asking: 'Generating question...',
+  speaking: 'Interviewer is asking...',
+  listening_answer: 'Your turn \u2014 speak your answer',
+  committing: 'Finishing your answer...',
+  evaluating: 'Evaluating your answer...',
+  mock_question: 'Getting the next question...',
+};
+
+function ivSetStatus(msg) {
+  const state = msg.state || 'idle';
+  ivStatusText.textContent = msg.message || IV_STATE_LABELS[state] || state;
+  const active = state !== 'idle';
+  ivStatusDot.className = 'status-dot ' + (active ? 'on pulse' : 'off');
+  if (msg.message) statusText.textContent = msg.message;
+  ivMockState = (msg.mock_state !== undefined) ? msg.mock_state : null;
+  mockDoneBtn.style.display =
+    (ivSession === 'mock' && ivMockState === 'listening') ? '' : 'none';
+  if (msg.provider) ivSetProviderLabel(msg.provider);
+}
+
+function ivHandleActionResult(msg) {
+  if (!msg.ok) {
+    showToast(msg.error || 'Action failed');
+    if (msg.action === 'start_live' || msg.action === 'start_mock') {
+      ivSetButtons(null);
+      stopPhoneMic();
+    }
+    return;
+  }
+  if (msg.action === 'start_live') {
+    ivClearHistory();
+    ivSession = 'live';
+    ivSetButtons('live');
+  } else if (msg.action === 'stop_live') {
+    if (ivSession === 'live') ivSetButtons(null);
+  } else if (msg.action === 'start_mock') {
+    ivClearHistory();
+    ivSession = 'mock';
+    ivMockState = null;
+    ivSetButtons('mock');
+    if (msg.mic_source === 'phone') startPhoneMic();
+  } else if (msg.action === 'stop_mock') {
+    stopPhoneMic();
+    ivMockState = null;
+    if (ivSession === 'mock') ivSetButtons(null);
+    mockDoneBtn.style.display = 'none';
+  } else if (msg.action === 'skip_question') {
+    showToast('Skipping question...');
+  } else if (msg.action === 'set_auto_assist') {
+    showToast('Auto screen assist ' + (msg.auto_screen_assist ? 'on' : 'off'));
+  } else if (msg.action === 'set_provider') {
+    ivSetProviderLabel(msg.active);
+    showToast('Model: ' + ivProviderLabel(msg.active));
+  } else if (msg.action === 'provider_status') {
+    ivSetProviderLabel(msg.active);
+  } else if (msg.action === 'context_status') {
+    ivRenderContext(msg.context);
+  } else if (msg.action === 'stash_capture') {
+    if (msg.ok && msg.context) {
+      ivRenderContext(msg.context);
+      const slotInfo = msg.context[msg.slot === 'code' ? 'code' : 'problem'];
+      showToast((msg.slot === 'code' ? 'Code' : 'Problem') + ' stashed — ' + slotInfo.chars + ' chars');
+    }
+  } else if (msg.action === 'stash_clear') {
+    if (msg.ok) ivRenderContext(msg.context);
+  } else if (msg.action === 'add_segment') {
+    if (msg.ok) {
+      ivRenderContext(msg.context);
+      showToast('Segment ' + msg.segments + ' added');
+    }
+  }
+}
+
+function ivSetButtons(session) {
+  const live = session === 'live';
+  const mock = session === 'mock';
+  liveStartBtn.style.display = live ? 'none' : '';
+  liveStopBtn.style.display = live ? '' : 'none';
+  mockStartBtn.style.display = mock ? 'none' : '';
+  mockStopBtn.style.display = mock ? '' : 'none';
+  mockSkipBtn.style.display = mock ? '' : 'none';
+  if (!mock) mockDoneBtn.style.display = 'none';
+  mockMicSelect.disabled = mock;
+  mockRoleInput.disabled = mock;
+  mockLevelSelect.disabled = mock;
+}
+
+// ---- history rendering ----------------------------------------------
+
+function ivClearHistory() {
+  interviewHistory.innerHTML = '';
+  interviewHistory.appendChild(ivEmpty);
+  ivEmpty.style.display = '';
+  interviewCaption.style.display = 'none';
+}
+
+function ivShowCaption(text) {
+  interviewCaption.style.display = 'block';
+  interviewCaption.textContent = text;
+}
+
+function ivHideCaption() {
+  interviewCaption.style.display = 'none';
+  interviewCaption.textContent = '';
+}
+
+const IV_ROLE_LABELS = { interviewer: 'Interviewer', candidate: 'You' };
+
+function ivAddEntry(role, text) {
+  ivEmpty.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'iv-msg ' + role;
+  div.innerHTML = `<div class="iv-role">${IV_ROLE_LABELS[role] || role}</div>` +
+    `<div class="iv-bubble">${escapeHtml(text)}</div>`;
+  interviewHistory.appendChild(div);
+  interviewHistory.scrollTop = interviewHistory.scrollHeight;
+}
+
+function ivAddFeedback(msg) {
+  ivEmpty.style.display = 'none';
+  const score = typeof msg.score === 'number' ? msg.score : 0;
+  const scoreCls = score >= 7 ? '' : (score >= 4 ? 'mid' : 'low');
+  const improved = msg.improved_answer
+    ? `<div class="iv-improved"><b>Model answer:</b><br>${escapeHtml(msg.improved_answer)}</div>`
+    : '';
+  const div = document.createElement('div');
+  div.className = 'iv-msg evaluator';
+  div.innerHTML =
+    `<div class="iv-role">Evaluation — Q${msg.question_number || '?'}</div>` +
+    `<div class="iv-bubble"><span class="iv-score ${scoreCls}">${score}/10</span><br>` +
+    `${escapeHtml(msg.feedback || '')}${improved}</div>`;
+  interviewHistory.appendChild(div);
+  interviewHistory.scrollTop = interviewHistory.scrollHeight;
+}
+
+function ivAddScreenResult(result) {
+  if (!result.detected) {
+    ivAddEntry('candidate', '(No question detected in the captured region)');
+    return;
+  }
+  ivAddEntry('interviewer', result.question || '(captured question)');
+  ivAddEntry('candidate', result.answer || '');
+}
+
+function ivAddScreenSolve(msg) {
+  if (!msg.detected && !msg.answer && !msg.code) {
+    ivAddEntry('candidate', '(Nothing relevant found on screen)');
+    return;
+  }
+  ivEmpty.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'iv-msg candidate';
+
+  let codeHtml = '';
+  if (msg.code) {
+    const lang = escapeHtml(msg.language && msg.language !== 'n/a' ? msg.language : 'code');
+    codeHtml =
+      '<div class="iv-code-wrap">' +
+      `<div class="iv-code-head"><span>${lang}</span><button class="iv-copy">Copy</button></div>` +
+      `<pre class="iv-code">${escapeHtml(msg.code)}</pre>` +
+      '</div>';
+  }
+  let stepsHtml = '';
+  if (msg.steps && msg.steps.length) {
+    stepsHtml =
+      '<div class="iv-code-wrap"><div class="iv-code-head"><span>Next steps</span></div>' +
+      '<ol class="iv-steps">' + msg.steps.map(s => `<li>${escapeHtml(s)}</li>`).join('') +
+      '</ol></div>';
+  }
+  const label = msg.variant === 'next_step' ? 'Next step' : 'Screen solve';
+  const tag = msg.auto ? ' (auto)' : '';
+  div.innerHTML =
+    `<div class="iv-role">${label}${tag}</div>` +
+    `<div class="iv-bubble">${escapeHtml(msg.answer || '')}${codeHtml}${stepsHtml}</div>`;
+
+  const copyBtn = div.querySelector('.iv-copy');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(msg.code || '').then(() => {
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1200);
+      }).catch(() => showToast('Copy failed'));
+    });
+  }
+  interviewHistory.appendChild(div);
+  interviewHistory.scrollTop = interviewHistory.scrollHeight;
+}
+
+// ---- provider switch + context stash chips ---------------------------
+
+function ivProviderLabel(name) {
+  return name === 'gemini' ? 'Gemini' : 'Groq';
+}
+
+function ivSetProviderLabel(name) {
+  const active = name === 'gemini' ? 'gemini' : 'groq';
+  ivProviderBtn.dataset.active = active;
+  ivProviderBtn.textContent = ivProviderLabel(active);
+}
+
+function ivRenderContext(ctx) {
+  if (!ctx) return;
+  ivCtx = {
+    problem: (ctx.problem && ctx.problem.chars) || 0,
+    code: (ctx.code && ctx.code.chars) || 0,
+    segments: ctx.segments || 0,
+  };
+  ivCtxPreview = {
+    problem: (ctx.problem && ctx.problem.preview) || '',
+    code: (ctx.code && ctx.code.preview) || '',
+  };
+  const any = ivCtx.problem || ivCtx.code || ivCtx.segments;
+  ivContextBar.style.display = any ? 'flex' : 'none';
+  ivChipProblem.style.display = ivCtx.problem ? '' : 'none';
+  ivChipProblemLen.textContent = ivCtx.problem;
+  ivChipCode.style.display = ivCtx.code ? '' : 'none';
+  ivChipCodeLen.textContent = ivCtx.code;
+  ivChipSeg.style.display = ivCtx.segments ? '' : 'none';
+  ivChipSegLen.textContent = ivCtx.segments;
+}
+
+// ---- phone microphone (mock interview) ------------------------------
+
+async function startPhoneMic() {
+  if (phoneMic) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true }
+    });
+    const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    const src = ctx.createMediaStreamSource(stream);
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
+
+    proc.onaudioprocess = (e) => {
+      if (!ivWsReady || ivSession !== 'mock') return;
+      const f32 = e.inputBuffer.getChannelData(0);
+      const pcm = new Int16Array(f32.length);
+      for (let i = 0; i < f32.length; i++) {
+        const s = Math.max(-1, Math.min(1, f32[i]));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      const bytes = new Uint8Array(pcm.buffer);
+      let bin = '';
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+      }
+      try {
+        ivWs.send(JSON.stringify({ action: 'mic_audio', data: btoa(bin) }));
+      } catch (e) {}
+    };
+
+    src.connect(proc);
+    proc.connect(mute);
+    mute.connect(ctx.destination);
+    phoneMic = { stream, ctx, proc };
+    showToast('Phone mic active');
+  } catch (e) {
+    console.error('getUserMedia failed', e);
+    showToast('Microphone access denied');
+  }
+}
+
+function stopPhoneMic() {
+  if (!phoneMic) return;
+  try { phoneMic.proc.disconnect(); } catch (e) {}
+  try { phoneMic.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  try { phoneMic.ctx.close(); } catch (e) {}
+  phoneMic = null;
+}
+
+// ---- controls --------------------------------------------------------
+
+document.querySelectorAll('.subtab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.subtab').forEach(x => x.classList.remove('active'));
+    tab.classList.add('active');
+    ivSubTab = tab.dataset.sub;
+    liveControls.style.display = ivSubTab === 'live' ? 'flex' : 'none';
+    mockControls.style.display = ivSubTab === 'mock' ? 'flex' : 'none';
+    ivSetStatus({ state: ivSession ? (ivSession === 'live' ? 'listening' : 'listening_answer') : 'idle' });
+  });
+});
+
+liveStartBtn.addEventListener('click', () => {
+  if (ivSend({ action: 'start_live' })) {
+    ivStatusText.textContent = 'Starting live session...';
+  }
+});
+liveStopBtn.addEventListener('click', () => ivSend({ action: 'stop_live' }));
+
+mockStartBtn.addEventListener('click', () => {
+  const payload = {
+    action: 'start_mock',
+    mic_source: mockMicSelect.value,
+    role: mockRoleInput.value.trim() || 'software engineer',
+    level: mockLevelSelect.value,
+  };
+  if (ivSend(payload)) {
+    ivStatusText.textContent = 'Starting mock interview...';
+  }
+});
+mockStopBtn.addEventListener('click', () => {
+  stopPhoneMic();
+  ivSend({ action: 'stop_mock' });
+});
+mockSkipBtn.addEventListener('click', () => ivSend({ action: 'skip_question' }));
+mockDoneBtn.addEventListener('click', () => ivSend({ action: 'answer_done' }));
+
+function ivGrabRegionB64() {
+  if (!streamActive || !streamPreview.src || streamPreview.naturalWidth === 0) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = streamPreview.naturalWidth;
+  canvas.height = streamPreview.naturalHeight;
+  canvas.getContext('2d').drawImage(streamPreview, 0, 0);
+  return canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+}
+
+ivSolveBtn.addEventListener('click', () => {
+  const image = ivGrabRegionB64();
+  showToast('Solving...');
+  // image may be null: the server falls back to its own frame, stacked
+  // segments, or the stashed problem text.
+  ivSend({ action: 'solve_screen', image });
+});
+
+ivNextBtn.addEventListener('click', () => {
+  const image = ivGrabRegionB64();
+  showToast('Computing next step...');
+  ivSend({ action: 'next_step', image });
+});
+
+ivProviderBtn.addEventListener('click', () => {
+  const target = ivProviderBtn.dataset.active === 'groq' ? 'gemini' : 'groq';
+  ivSend({ action: 'set_provider', provider: target });
+});
+
+ivProblemBtn.addEventListener('click', () => ivSend({ action: 'stash_capture', slot: 'problem' }));
+ivCodeBtn.addEventListener('click', () => ivSend({ action: 'stash_capture', slot: 'code' }));
+ivSegmentBtn.addEventListener('click', () => {
+  if (!streamActive) {
+    showToast('Select a region first');
+    return;
+  }
+  ivSend({ action: 'add_segment' });
+});
+
+function ivChipHandler(chip, preview, slot) {
+  chip.addEventListener('click', (e) => {
+    if (e.target && e.target.tagName === 'I') {
+      ivSend({ action: 'stash_clear', slot });
+      return;
+    }
+    const text = preview();
+    if (text) showToast(text);
+  });
+}
+ivChipHandler(ivChipProblem, () => ivCtxPreview.problem, 'problem');
+ivChipHandler(ivChipCode, () => ivCtxPreview.code, 'code');
+ivChipHandler(ivChipSeg, () => ivCtx.segments + ' screenshot segment(s) stacked', 'segments');
+
+ivAutoAssistBtn.addEventListener('click', () => {
+  ivAutoAssist = !ivAutoAssist;
+  ivAutoAssistBtn.textContent = 'Auto: ' + (ivAutoAssist ? 'On' : 'Off');
+  ivAutoAssistBtn.classList.toggle('off', !ivAutoAssist);
+  ivSend({ action: 'set_auto_assist', enabled: ivAutoAssist });
+});
+
+ivSelectRegionBtn.addEventListener('click', () => {
+  selectRegionBtn.click();
+  setTimeout(() => {
+    if (streamActive) ivScreenPreview.style.display = 'block';
+  }, 4000);
+});
+
+ivCaptureBtn.addEventListener('click', () => {
+  if (!streamActive) {
+    showToast('Select a region first');
+    return;
+  }
+  ivScreenPreview.style.display = 'block';
+  handleCapture('quick');
+});
+
+ivPreviewClose.addEventListener('click', () => {
+  ivScreenPreview.style.display = 'none';
+});
+
+// ---- mirror panel controls -------------------------------------------
+
+mirrorOpenBtn.addEventListener('click', () => ivSend({ action: 'overlay_open' }));
+mirrorCloseBtn.addEventListener('click', () => ivSend({ action: 'overlay_close' }));
+mirrorHideBtn.addEventListener('click', () => ivSend({ action: 'overlay_hide' }));
+
+document.getElementById('mirrorWPlus').addEventListener('click', () =>
+  ivSend({ action: 'overlay_step', axis: 'w', delta: 40 }));
+document.getElementById('mirrorWMinus').addEventListener('click', () =>
+  ivSend({ action: 'overlay_step', axis: 'w', delta: -40 }));
+document.getElementById('mirrorHPlus').addEventListener('click', () =>
+  ivSend({ action: 'overlay_step', axis: 'h', delta: 40 }));
+document.getElementById('mirrorHMinus').addEventListener('click', () =>
+  ivSend({ action: 'overlay_step', axis: 'h', delta: -40 }));
+document.getElementById('mirrorZoomPlus').addEventListener('click', () =>
+  ivSend({ action: 'overlay_zoom', delta: 0.1 }));
+document.getElementById('mirrorZoomMinus').addEventListener('click', () =>
+  ivSend({ action: 'overlay_zoom', delta: -0.1 }));
+document.getElementById('mirrorOpPlus').addEventListener('click', () =>
+  ivSend({ action: 'overlay_opacity', delta: 0.1 }));
+document.getElementById('mirrorOpMinus').addEventListener('click', () =>
+  ivSend({ action: 'overlay_opacity', delta: -0.1 }));
+mirrorClickBtn.addEventListener('click', () =>
+  ivSend({ action: 'overlay_click_through', enabled: !overlayState.click_through }));
+document.getElementById('mirrorCenterBtn').addEventListener('click', () =>
+  ivSend({ action: 'overlay_center' }));
+document.querySelectorAll('.mirror-preset').forEach(btn => {
+  btn.addEventListener('click', () =>
+    ivSend({ action: 'overlay_preset', name: btn.dataset.preset }));
+});
+
+// drag pad: accumulate pointer deltas, flush to the server every 50ms
+let mirrorDragLast = null;
+let mirrorDragPending = { x: 0, y: 0 };
+let mirrorDragLastSend = 0;
+
+function mirrorDragFlush(force) {
+  const now = Date.now();
+  if (!mirrorDragPending.x && !mirrorDragPending.y) return;
+  if (!force && now - mirrorDragLastSend < 50) return;
+  ivSend({ action: 'overlay_move', dx: mirrorDragPending.x, dy: mirrorDragPending.y });
+  mirrorDragPending = { x: 0, y: 0 };
+  mirrorDragLastSend = now;
+}
+
+mirrorDrag.addEventListener('pointerdown', (e) => {
+  mirrorDragLast = { x: e.clientX, y: e.clientY };
+  try { mirrorDrag.setPointerCapture(e.pointerId); } catch (err) {}
+});
+mirrorDrag.addEventListener('pointermove', (e) => {
+  if (!mirrorDragLast) return;
+  e.preventDefault();
+  mirrorDragPending.x += e.clientX - mirrorDragLast.x;
+  mirrorDragPending.y += e.clientY - mirrorDragLast.y;
+  mirrorDragLast = { x: e.clientX, y: e.clientY };
+  mirrorDragFlush(false);
+});
+['pointerup', 'pointercancel'].forEach(ev => {
+  mirrorDrag.addEventListener(ev, () => {
+    mirrorDragLast = null;
+    mirrorDragFlush(true);
+  });
+});
+
 // Init
+ivConnect();  // always-on socket: tab sync + overlay control in every tab
 checkScreenStatus();
 
 // Restore the persisted tab; do not overwrite it with the JavaScript default.
@@ -1176,6 +2446,7 @@ checkScreenStatus();
       aiBar.querySelectorAll('.ai-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.ai === currentAI);
       });
+      sendTabSync(currentAI);  // tell the pane which tab the phone restored
     }
   } catch (e) {}
   updateCaptureButtons();
