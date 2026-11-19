@@ -28,6 +28,7 @@ from gemini_client import (
     get_settings,
 )
 from provider_router import DEFAULT_ROUTER, ProviderRouter
+from rate_gate import DEFAULT_GATE, RateGate
 
 log = logging.getLogger("quizbox.interview")
 
@@ -218,6 +219,8 @@ def detect_and_answer(
     transcript: str,
     history: list[dict] | None = None,
     router: ProviderRouter | None = None,
+    gate: RateGate | None = None,
+    on_wait=None,
 ) -> dict:
     """Detect whether an interviewer statement is a question and answer it.
 
@@ -247,7 +250,9 @@ def detect_and_answer(
         "gemini": lambda: _gemini_chat(messages, max_tokens=2000, timeout=30),
     }
     try:
-        content, served = router.run(calls)
+        content, served = (gate or DEFAULT_GATE).run(
+            router, calls, on_wait=on_wait, what="answer",
+        )
     except Exception as exc:
         log.error("detect_and_answer failed: %s", exc)
         return {"is_question": False, "incomplete": False, "needs_screen": False,
@@ -268,6 +273,8 @@ def generate_mock_question(
     question_number: int = 1,
     previous_qa: list[dict] | None = None,
     router: ProviderRouter | None = None,
+    gate: RateGate | None = None,
+    on_wait=None,
 ) -> str:
     """Generate the next mock interview question.
 
@@ -296,7 +303,9 @@ def generate_mock_question(
         "gemini": lambda: _gemini_chat(messages, max_tokens=800, timeout=25),
     }
     try:
-        content, _served = router.run(calls)
+        content, _served = (gate or DEFAULT_GATE).run(
+            router, calls, on_wait=on_wait, what="question",
+        )
     except Exception as exc:
         log.error("generate_mock_question failed: %s", exc)
         return "Tell me about yourself and your background."
@@ -309,6 +318,8 @@ def evaluate_mock_answer(
     answer: str,
     history: list[dict] | None = None,
     router: ProviderRouter | None = None,
+    gate: RateGate | None = None,
+    on_wait=None,
 ) -> dict:
     """Score a mock interview answer. Returns {"score": int, "feedback": str, "improved_answer": str}."""
     answer = (answer or "").strip()
@@ -338,7 +349,9 @@ def evaluate_mock_answer(
         "gemini": lambda: _gemini_chat(messages, max_tokens=1200, timeout=30),
     }
     try:
-        content, _served = router.run(calls)
+        content, _served = (gate or DEFAULT_GATE).run(
+            router, calls, on_wait=on_wait, what="evaluate",
+        )
     except Exception as exc:
         log.error("evaluate_mock_answer failed: %s", exc)
         return {"score": 0, "feedback": f"Evaluation failed: {exc}", "improved_answer": ""}
@@ -467,6 +480,8 @@ def solve_with_screen(
     problem_text: str | None = None,
     starter_code: str | None = None,
     router: ProviderRouter | None = None,
+    gate: RateGate | None = None,
+    on_wait=None,
 ) -> dict:
     """Fuse screen screenshot(s) + stashed problem/code text with the live
     transcript into a coding answer.
@@ -480,6 +495,10 @@ def solve_with_screen(
     ``{groq|gemini}_{vision|text}`` and, when it differs from the active one,
     the router sticks to it (fallback) exactly like the single-call path.
     Raises RuntimeError if every stage fails.
+
+    When EVERY stage fails on rate limits the whole stage sweep is retried
+    through the rate gate (backoff + key rotation between sweeps); other
+    failures still raise immediately.
     """
     router = router or DEFAULT_ROUTER
     images = [img for img in (image_jpegs or []) if img][:3]
@@ -518,24 +537,27 @@ def solve_with_screen(
         stages.extend((provider, "vision") for provider in order)
     stages.extend((provider, "text") for provider in order)
 
-    for provider, kind in stages:
-        try:
-            content = (vision_call if kind == "vision" else text_call)[provider]()
-        except Exception as exc:
-            errors.append(f"{provider} {kind} failed: {exc}")
-            continue
-        parsed = _parse_solve_response(content)
-        if parsed["detected"]:
-            parsed["provider"] = f"{provider}_{kind}"
-            router.note_served(
-                provider,
-                failed=provider if provider != router.active else "",
-                error=(errors[0] if errors else "")[:200],
-            )
-            return parsed
-        errors.append(f"{provider} {kind} unusable output: {content[:120]!r}")
+    def _attempt() -> dict:
+        errors.clear()
+        for provider, kind in stages:
+            try:
+                content = (vision_call if kind == "vision" else text_call)[provider]()
+            except Exception as exc:
+                errors.append(f"{provider} {kind} failed: {exc}")
+                continue
+            parsed = _parse_solve_response(content)
+            if parsed["detected"]:
+                parsed["provider"] = f"{provider}_{kind}"
+                router.note_served(
+                    provider,
+                    failed=provider if provider != router.active else "",
+                    error=(errors[0] if errors else "")[:200],
+                )
+                return parsed
+            errors.append(f"{provider} {kind} unusable output: {content[:120]!r}")
+        raise RuntimeError("Screen solve failed: " + " | ".join(errors)[:400])
 
-    raise RuntimeError("Screen solve failed: " + " | ".join(errors)[:400])
+    return (gate or DEFAULT_GATE).call(_attempt, on_wait=on_wait, what="solve")
 
 
 def _solve_with_gemini(image_jpegs: list[bytes], prompt: str) -> str:
@@ -554,3 +576,335 @@ def _solve_with_gemini(image_jpegs: list[bytes], prompt: str) -> str:
         )
     )
     return response.text or ""
+
+
+# ---------------------------------------------------------------------------
+# System-design interview mode (multi-turn ladder + mermaid diagrams)
+# ---------------------------------------------------------------------------
+
+DESIGN_DEFAULT_LADDER = [
+    "Clarify requirements and constraints with the interviewer",
+    "Outline a high-level design (main components and how they connect)",
+    "Deep dive into the key components and data flow",
+    "Discuss bottlenecks, failures, and trade-offs",
+]
+
+# Canonical ladder stages (stepper order shown in the UI).
+DESIGN_STAGES = ("clarify", "requirements", "high_level", "deep_dive", "bottlenecks", "summary")
+
+DESIGN_EXTRACT_PROMPT = """You are reading a system-design interview question panel from a screenshot.
+
+Extract exactly two things:
+1. QUESTION: the full design question the candidate must answer.
+2. INSTRUCTIONS: the staged instruction ladder the interviewer expects, one bullet per stage (e.g. "Start with clarifying requirements", "Then give a high-level design", "Deep dive on bottlenecks"). Preserve the order shown.
+
+Respond in exactly this format:
+QUESTION: <the question>
+INSTRUCTIONS:
+- <stage 1>
+- <stage 2>"""
+
+DESIGN_SYSTEM_PROMPT = """You are a senior candidate talking out loud in a LIVE system-design interview. An AI copilot is feeding you the interviewer's words; you produce what the candidate says next. The candidate speaks your text VERBATIM, so it must sound like natural speech.
+
+Interview question: {question}
+Interviewer's staged instructions (follow THEM in order — never skip ahead unless the interviewer does):
+{instructions}
+
+Design session state (everything already established — stay consistent, never re-ask, never contradict):
+- Current stage: {stage}
+- Clarified facts: {facts}
+- Decisions made: {decisions}
+- Diagram so far (mermaid source):
+{diagram}
+
+{recent}
+
+Interviewer just said / panel now shows:
+"{utterance}"
+
+Produce the candidate's next turn:
+- STAGE: which ladder stage this turn belongs to ({stage_options}).
+- SPOKEN: what the candidate says OUT LOUD. First person, conversational, 3-10 sentences, NO markdown, NO bullets, NO headings, NO code fences — it is spoken word for word. Reference established facts/decisions; ask a clarifying question when still in the clarify stage.
+- MERMAID: the COMPLETE updated architecture diagram as mermaid source (start with "flowchart TD" or "graph TD", keep node ids simple alphanumeric). It must reflect every decision made so far, including new ones from this turn. Return N/A if this turn needs no diagram change.
+- FACTS: new clarified facts established this turn, "; "-separated, or N/A.
+- DECISIONS: new architecture decisions made this turn, "; "-separated, or N/A.
+- NEXT: one short sentence telling the candidate what to do next, or N/A.
+
+Respond in exactly this format:
+STAGE: ...
+SPOKEN: ...
+MERMAID: ...
+FACTS: ...
+DECISIONS: ...
+NEXT: ..."""
+
+DESIGN_TURN_USER = "{utterance}"
+
+
+def _design_ladder_text(instructions: list[str]) -> str:
+    items = [str(i).strip() for i in (instructions or []) if str(i).strip()]
+    if not items:
+        items = list(DESIGN_DEFAULT_LADDER)
+    return "\n".join(f"{idx}. {text}" for idx, text in enumerate(items, 1))
+
+
+def _parse_design_extract(text: str) -> dict:
+    """Parse QUESTION / INSTRUCTIONS blocks from design_extract output."""
+    result = {"question": "", "instructions": []}
+    if not text:
+        return result
+    q_match = re.search(r"QUESTION:\s*(.*?)(?=^INSTRUCTIONS:|\Z)", text,
+                        re.IGNORECASE | re.DOTALL | re.MULTILINE)
+    if q_match:
+        result["question"] = q_match.group(1).strip()
+    i_match = re.search(r"^INSTRUCTIONS:\s*(.*)\Z", text,
+                        re.IGNORECASE | re.DOTALL | re.MULTILINE)
+    if i_match:
+        for line in i_match.group(1).splitlines():
+            line = line.strip()
+            if line.startswith(("-", "*", "•")) or re.match(r"^\d+[.)]", line):
+                cleaned = re.sub(r"^(?:[-*•]|\d+[.)])\s*", "", line).strip()
+                if cleaned:
+                    result["instructions"].append(cleaned)
+    if not result["question"] and not result["instructions"]:
+        stripped = text.strip()
+        if stripped and not stripped.upper().startswith(("INSTRUCTIONS", "QUESTION")):
+            result["question"] = stripped[:600]
+    return result
+
+
+def _parse_design_response(text: str) -> dict:
+    """Parse STAGE/SPOKEN/MERMAID/FACTS/DECISIONS/NEXT blocks.
+
+    N/A handling: empty mermaid means "keep the previous diagram"; empty
+    lists mean "no new facts/decisions this turn".
+    """
+    result = {"stage": "", "spoken": "", "mermaid": "",
+              "facts": [], "decisions": [], "next": ""}
+    if not text:
+        return result
+    cleaned = text.strip()
+    fence = re.search(r"```(?:text)?\s*(.*?)```", cleaned, re.DOTALL)
+    if fence and "SPOKEN:" in fence.group(1):
+        cleaned = fence.group(1).strip()
+
+    def _block(name: str) -> str:
+        match = re.search(
+            rf"(?<!\w){name}:\s*(.*?)(?=^(?:STAGE|SPOKEN|MERMAID|FACTS|DECISIONS|NEXT):|\Z)",
+            cleaned, re.IGNORECASE | re.DOTALL | re.MULTILINE,
+        )
+        return match.group(1).strip() if match else ""
+
+    result["stage"] = _block("STAGE").lower().replace(" ", "_")
+    result["spoken"] = _block("SPOKEN")
+    mermaid = _block("MERMAID")
+    if mermaid and mermaid.upper() != "N/A":
+        # strip accidental fences around the diagram itself
+        mermaid = re.sub(r"^```(?:mermaid)?\s*", "", mermaid)
+        mermaid = re.sub(r"\s*```$", "", mermaid).strip()
+        result["mermaid"] = mermaid
+    facts_raw = _block("FACTS")
+    if facts_raw and facts_raw.upper() != "N/A":
+        result["facts"] = [f.strip() for f in facts_raw.split(";") if f.strip()]
+    decisions_raw = _block("DECISIONS")
+    if decisions_raw and decisions_raw.upper() != "N/A":
+        result["decisions"] = [d.strip() for d in decisions_raw.split(";") if d.strip()]
+    next_raw = _block("NEXT")
+    if next_raw and next_raw.upper() != "N/A":
+        result["next"] = next_raw
+
+    if not result["spoken"]:
+        # No markers at all: model replied in plain prose (format drift).
+        # Surface it rather than dropping the turn.
+        if "SPOKEN:" not in cleaned.upper():
+            result["spoken"] = cleaned
+    if result["stage"] and result["stage"] not in DESIGN_STAGES:
+        result["stage"] = ""
+    return result
+
+
+def design_extract(
+    image_jpegs: list[bytes] | None = None,
+    problem_text: str | None = None,
+    router: ProviderRouter | None = None,
+    gate: RateGate | None = None,
+    on_wait=None,
+) -> dict:
+    """Read the question + instruction ladder from the interview panel.
+
+    Images (region frame) win; a stashed problem statement works alone for
+    copy-enabled platforms. Returns {"question", "instructions", "provider"}.
+    """
+    router = router or DEFAULT_ROUTER
+    images = [img for img in (image_jpegs or []) if img][:3]
+    prompt = DESIGN_EXTRACT_PROMPT
+    if not images and problem_text:
+        prompt += "\n\nPanel text (copied from the challenge panel):\n" + problem_text.strip()
+
+    errors: list[str] = []
+
+    def groq_vision() -> str:
+        parts: list[dict] = [{"type": "text", "text": prompt}]
+        for img in images:
+            b64 = base64.b64encode(img).decode("ascii")
+            parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+        content, _msg = _groq_chat(
+            GROQ_VISION_MODEL, [{"role": "user", "content": parts}],
+            max_tokens=1500, timeout=60,
+        )
+        return content
+
+    def gemini_vision() -> str:
+        return _solve_with_gemini(images, prompt)
+
+    def groq_text() -> str:
+        return _chat(GROQ_TEXT_FALLBACK_MODEL, [{"role": "user", "content": prompt}],
+                     max_tokens=1500, timeout=30)
+
+    def gemini_text() -> str:
+        return _gemini_chat([{"role": "user", "content": prompt}], max_tokens=1500, timeout=30)
+
+    order = router.stage_order()
+    stages: list[tuple[str, str]] = []
+    if images:
+        stages.extend((provider, "vision") for provider in order)
+    stages.extend((provider, "text") for provider in order)
+
+    def _attempt() -> dict:
+        errors.clear()
+        for provider, kind in stages:
+            try:
+                if kind == "vision":
+                    content = groq_vision() if provider == "groq" else gemini_vision()
+                else:
+                    content = groq_text() if provider == "groq" else gemini_text()
+            except Exception as exc:
+                errors.append(f"{provider} {kind} failed: {exc}")
+                continue
+            parsed = _parse_design_extract(content)
+            if parsed["question"] or parsed["instructions"]:
+                parsed["provider"] = f"{provider}_{kind}"
+                router.note_served(
+                    provider,
+                    failed=provider if provider != router.active else "",
+                    error=(errors[0] if errors else "")[:200],
+                )
+                return parsed
+            errors.append(f"{provider} {kind} unusable output: {content[:120]!r}")
+        raise RuntimeError("Design extract failed: " + " | ".join(errors)[:400])
+
+    return (gate or DEFAULT_GATE).call(_attempt, on_wait=on_wait, what="design")
+
+
+def design_turn(
+    utterance: str,
+    state: dict,
+    history: list[dict] | None = None,
+    images: list[bytes] | None = None,
+    problem_text: str | None = None,
+    router: ProviderRouter | None = None,
+    gate: RateGate | None = None,
+    on_wait=None,
+) -> dict:
+    """Advance a design session by one interviewer turn.
+
+    ``state`` is a snapshot: {"question", "instructions", "stage", "facts",
+    "decisions", "diagram"}. The response carries state patches (FACTS /
+    DECISIONS / MERMAID / STAGE) for the caller to merge, so the session
+    keeps constant prompt size while the interview runs arbitrarily long.
+
+    Returns {"stage", "spoken", "mermaid", "facts", "decisions", "next",
+    "provider"}; on failure returns {"error": str}.
+    """
+    router = router or DEFAULT_ROUTER
+    utterance = (utterance or "").strip() or "(continue with the next instruction)"
+    question = str(state.get("question") or "").strip() or "(unknown — re-read the panel)"
+    stage = str(state.get("stage") or "clarify")
+    diagram = str(state.get("diagram") or "").strip()
+
+    recent_lines: list[str] = []
+    for item in (history or [])[-4:]:
+        q = str(item.get("question") or "").strip()
+        a = str(item.get("answer") or "").strip()
+        if q:
+            recent_lines.append(f"Interviewer: {q}")
+        if a:
+            recent_lines.append(f"Candidate: {a}")
+    recent = ("Earlier in this interview (stay consistent):\n" + "\n".join(recent_lines)
+              if recent_lines else "")
+
+    facts = [str(f).strip() for f in (state.get("facts") or []) if str(f).strip()]
+    decisions = [str(d).strip() for d in (state.get("decisions") or []) if str(d).strip()]
+
+    system = DESIGN_SYSTEM_PROMPT.format(
+        question=question,
+        instructions=_design_ladder_text(state.get("instructions")),
+        stage=stage,
+        facts="; ".join(facts) if facts else "(none yet)",
+        decisions="; ".join(decisions) if decisions else "(none yet)",
+        diagram=diagram or "(none yet)",
+        recent=recent,
+        utterance=utterance,
+        stage_options=" | ".join(DESIGN_STAGES),
+    )
+    messages = [{"role": "system", "content": system},
+                {"role": "user", "content": DESIGN_TURN_USER.format(utterance=utterance)}]
+
+    images = [img for img in (images or []) if img][:3]
+
+    def groq_vision() -> str:
+        parts: list[dict] = [{"type": "text", "text": system}]
+        for img in images:
+            b64 = base64.b64encode(img).decode("ascii")
+            parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+        content, _msg = _groq_chat(
+            GROQ_VISION_MODEL, [{"role": "user", "content": parts}],
+            max_tokens=4000, timeout=60,
+        )
+        return content
+
+    def gemini_vision() -> str:
+        return _solve_with_gemini(images, system)
+
+    def groq_text() -> str:
+        return _chat(GROQ_TEXT_FALLBACK_MODEL, messages, max_tokens=4000, timeout=45)
+
+    def gemini_text() -> str:
+        return _gemini_chat(messages, max_tokens=4000, timeout=45)
+
+    order = router.stage_order()
+    stages: list[tuple[str, str]] = []
+    if images:
+        stages.extend((provider, "vision") for provider in order)
+    stages.extend((provider, "text") for provider in order)
+
+    def _attempt() -> str:
+        errs: list[str] = []
+        for provider, kind in stages:
+            try:
+                if kind == "vision":
+                    content = groq_vision() if provider == "groq" else gemini_vision()
+                else:
+                    content = groq_text() if provider == "groq" else gemini_text()
+            except Exception as exc:
+                errs.append(f"{provider} {kind} failed: {exc}")
+                continue
+            parsed = _parse_design_response(content)
+            if parsed["spoken"] or parsed["mermaid"]:
+                return content
+            errs.append(f"{provider} {kind} unusable output: {content[:120]!r}")
+        raise RuntimeError("Design turn failed: " + " | ".join(errs)[:400])
+
+    try:
+        content = (gate or DEFAULT_GATE).call(_attempt, on_wait=on_wait, what="design")
+    except Exception as exc:
+        log.error("design_turn failed: %s", exc)
+        return {"stage": stage, "spoken": "", "mermaid": "", "facts": [],
+                "decisions": [], "next": "", "error": str(exc)}
+
+    result = _parse_design_response(content)
+    result.setdefault("stage", stage)
+    if not result["stage"]:
+        result["stage"] = stage
+    result["provider"] = router.active
+    return result

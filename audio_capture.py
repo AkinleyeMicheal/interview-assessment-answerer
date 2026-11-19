@@ -11,12 +11,16 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 
 import numpy as np
 
 log = logging.getLogger("quizbox.audio")
 
 TARGET_RATE = 16000
+# Mean |sample| (int16) above this counts as audible — silence/noise floor
+# sits well under 100, speech bursts run in the hundreds-to-thousands.
+LOUD_RMS = 250
 
 
 def resample_to_16k_mono(pcm_bytes: bytes, source_rate: int, source_channels: int) -> bytes:
@@ -46,6 +50,10 @@ class SystemAudioCapture:
         self._stream = None
         self._rate = 48000
         self._channels = 2
+        # Capture-health counters (read by the interview session's health tick)
+        self._frames = 0
+        self._last_frame_at = 0.0
+        self._last_loud_at = 0.0
 
     @staticmethod
     def find_loopback_device() -> dict | None:
@@ -94,6 +102,9 @@ class SystemAudioCapture:
         self._rate = device["rate"]
         self._channels = device["channels"]
         self._running = True
+        self._frames = 0
+        self._last_frame_at = 0.0
+        self._last_loud_at = 0.0
 
         def _run():
             try:
@@ -107,6 +118,13 @@ class SystemAudioCapture:
                         if self._callback and in_data:
                             pcm = resample_to_16k_mono(in_data, self._rate, self._channels)
                             if pcm:
+                                now = time.monotonic()
+                                self._frames += 1
+                                self._last_frame_at = now
+                                samples = np.frombuffer(pcm, dtype=np.int16)
+                                if (samples.size and
+                                        float(np.abs(samples.astype(np.float32)).mean()) > LOUD_RMS):
+                                    self._last_loud_at = now
                                 self._callback(pcm)
                     except Exception as exc:
                         log.error("Audio callback error: %s", exc)
@@ -161,6 +179,21 @@ class SystemAudioCapture:
 
     def is_running(self) -> bool:
         return self._running
+
+    def activity(self) -> dict:
+        """Capture-health snapshot for the live-transcript indicator.
+
+        ``frames`` flowing means the loopback device is alive; ``heard`` means
+        audible content (speech/music) was captured at least once.
+        """
+        now = time.monotonic()
+        return {
+            "running": self._running,
+            "frames": self._frames,
+            "heard": self._last_loud_at > 0.0,
+            "last_frame_age": (now - self._last_frame_at) if self._last_frame_at else None,
+            "last_loud_age": (now - self._last_loud_at) if self._last_loud_at else None,
+        }
 
 
 class MicCapture:

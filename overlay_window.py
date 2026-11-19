@@ -1,10 +1,13 @@
 """Desktop overlay pane — mirrors the phone UI on top of everything on the PC.
 
-The pane is a frameless, always-on-top, click-through, taskbar/Alt-Tab-hidden
-Qt window hosting a QtWebEngine view of the same Quizbox app
-(``/?display=overlay``).  It is controlled from the phone's Mirror tab over
-WebSocket; every control lands in this module's command queue and executes on
-a single dedicated GUI thread.
+The pane is a frameless, always-on-top, taskbar/Alt-Tab-hidden Qt window
+hosting a QtWebEngine view of the same Quizbox app (``/?display=overlay``).
+It is read-only by default — every mouse event passes through to the window
+beneath — but an explicit **Scroll mode** unlock (``set_interact``) temporarily
+makes the answer/conversation panels wheel- and scrollbar-scrollable; the
+unlock auto re-locks on Hide, close, or client disconnect.  It is controlled
+from the phone's Mirror tab over WebSocket; every control lands in this
+module's command queue and executes on a single dedicated GUI thread.
 
 Design notes
 ------------
@@ -50,16 +53,24 @@ MIN_W, MIN_H = 160, 120
 MAX_W, MAX_H = 4096, 2160
 SIZE_STEP = 40
 ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.5, 2.0, 0.1
+# Pane starts smaller so desktop text/buttons fit a laptop screen; the
+# Mirror-tab Zoom ± control still adjusts this live (phone UI unaffected).
+DEFAULT_ZOOM = 0.75
 OPACITY_MIN, OPACITY_MAX, OPACITY_STEP = 0.2, 1.0, 0.1
 PRESETS: dict[str, tuple[int, int]] = {
     "tiny": (240, 150),
     "compact": (420, 560),
-    "standard": (640, 800),
+    "standard": (768, 800),
 }
-DEFAULT_W, DEFAULT_H = 640, 800
+DEFAULT_W, DEFAULT_H = 768, 800
 # Keep at least this much of the pane on screen when clamping position.
 MIN_VISIBLE = 80
 HOTKEY_LABEL = "Ctrl+Shift+`"
+# Windows: the window shows on the monitor only — it never appears in any
+# screen capture (duplicates, screenshots, recordings).  Keeps the pane from
+# feeding its own mirrored image back into the captured frame (infinite
+# mirror / Droste feedback loop).  Win10 2004+ (user is on Windows 11).
+WDA_EXCLUDEFROMCAPTURE = 0x00000011
 
 OVERLAY_URL = "https://127.0.0.1:8000/?display=overlay"
 
@@ -68,6 +79,27 @@ _STOP = object()
 
 def clamp(value, lo, hi):
     return max(lo, min(hi, value))
+
+
+def _set_capture_exclusion(hwnd: int, user32=None) -> bool:
+    """Make the window invisible to every screen-capture API (WDA_EXCLUDE...).
+
+    Callable from any thread with a live HWND; returns False on failure
+    (older Windows, foreign window) — callers degrade gracefully.
+    """
+    if user32 is None:
+        user32 = ctypes.windll.user32
+    try:
+        ok = bool(user32.SetWindowDisplayAffinity(int(hwnd), WDA_EXCLUDEFROMCAPTURE))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("SetWindowDisplayAffinity(0x%x) raised for hwnd=%s: %s",
+                    WDA_EXCLUDEFROMCAPTURE, hwnd, exc)
+        return False
+    if not ok:
+        err = ctypes.windll.kernel32.GetLastError()
+        log.warning("SetWindowDisplayAffinity(0x%x) failed for hwnd=%s (err=%s)",
+                    WDA_EXCLUDEFROMCAPTURE, hwnd, err)
+    return ok
 
 
 class OverlayController:
@@ -104,11 +136,12 @@ class OverlayController:
             "w": DEFAULT_W,
             "h": DEFAULT_H,
             "opacity": 1.0,
-            "zoom": 1.0,
-            "click_through": True,
+            "zoom": DEFAULT_ZOOM,
             "positioned": False,
             "hotkey": HOTKEY_LABEL,
             "hotkey_registered": False,
+            "capture_excluded": False,
+            "interact": False,
         }
 
     # ------------------------------------------------------------------
@@ -243,15 +276,23 @@ class OverlayController:
     # ------------------------------------------------------------------
     def open(self) -> dict:
         st = self.status()
+        sx, sy, sw, sh = self._screen_bounds()
+        # Clamp size to the screen so the pane is never cut off
+        # (the 800-high default hangs off a 768-high display).
+        w = clamp(st["w"], MIN_W, min(MAX_W, sw))
+        h = clamp(st["h"], MIN_H, min(MAX_H, sh))
+        if (w, h) != (st["w"], st["h"]):
+            self._set(w=w, h=h)
         if not st.get("positioned"):
-            # First open: park on the right edge of the primary screen.
-            sx, sy, sw, _sh = self._screen_bounds()
-            x, y = self._clamped_position(sx + sw - st["w"] - 40, sy + 40)
-            self._set(x=x, y=y, positioned=True)
+            # First open: park on the right edge, fully on-screen.
+            x = clamp(sx + sw - w - 40, sx, sx + max(0, sw - w))
+            y = clamp(sy + 40, sy, sy + max(0, sh - h))
+            self._set(x=int(x), y=int(y), positioned=True)
         win = self._ensure_window()
         self._apply_geometry()
         win.open_pane()
-        return self._set(open=True, hidden=False)
+        self._apply_capture_exclusion()
+        return self._set(open=True, hidden=False, interact=False)
 
     def close(self) -> dict:
         win = self._win
@@ -261,7 +302,9 @@ class OverlayController:
             except Exception as exc:  # noqa: BLE001
                 log.error("overlay close failed: %s", exc)
             self._win = None
-        return self._set(open=False, hidden=False)
+        return self._set(
+            open=False, hidden=False, capture_excluded=False, interact=False
+        )
 
     def toggle(self) -> dict:
         return self.close() if self.status()["open"] else self.open()
@@ -321,11 +364,6 @@ class OverlayController:
         self._apply_opacity(opacity)
         return state
 
-    def set_click_through(self, enabled: bool = True) -> dict:
-        state = self._set(click_through=bool(enabled))
-        self._apply_click_through(bool(enabled))
-        return state
-
     def set_hidden(self, enabled: bool | None = None) -> dict:
         st = self.status()
         if not st["open"]:
@@ -337,6 +375,16 @@ class OverlayController:
         state = self._set(hidden=hidden)
         win = self._win
         if win is not None:
+            if hidden and state.get("interact"):
+                # Re-lock BEFORE hiding: Qt only applies window-flag changes
+                # to the platform window while the pane is visible (a
+                # setWindowFlag on a hidden widget defers the HWND update to
+                # the next show, leaving the hidden window unlocked).
+                try:
+                    state = self.set_interact(False)
+                except Exception as exc:  # noqa: BLE001
+                    log.error("overlay scroll re-lock failed: %s", exc)
+                    state = self._set(interact=False)
             try:
                 win.set_hidden(hidden)
             except Exception as exc:  # noqa: BLE001
@@ -345,6 +393,27 @@ class OverlayController:
 
     def toggle_hidden(self) -> dict:
         return self.set_hidden(None)
+
+    def set_interact(self, enabled: bool) -> dict:
+        """Unlock (or restore) native input for the pane's scroll surfaces.
+
+        Scroll mode: dropping ``WindowTransparentForInput`` lets the mouse
+        wheel and the native scrollbars of the answer/conversation panels
+        work directly on the pane (the page re-enables ``pointer-events``
+        for those two surfaces only).  The unlock is fail-closed — it is
+        forced back to locked by :meth:`set_hidden` (Hide/hotkey),
+        :meth:`close`, and the server on client disconnect.
+        """
+        win = self._win
+        if win is None:
+            raise RuntimeError("pane is not open")
+        enabled = bool(enabled)
+        win.set_interact(enabled)
+        win.run_js(
+            "document.body.classList.toggle('iv-scrollon', %s)"
+            % ("true" if enabled else "false")
+        )
+        return self._set(interact=enabled)
 
     # ------------------------------------------------------------------
     # Qt application (GUI thread only, lazy)
@@ -373,14 +442,23 @@ class OverlayController:
         except Exception as exc:  # noqa: BLE001
             log.error("overlay opacity failed: %s", exc)
 
-    def _apply_click_through(self, enabled: bool) -> None:
+    def _apply_capture_exclusion(self) -> None:
+        """GUI thread: hide the pane from every screen capture (WDA_EXCLUDE...).
+
+        The pane floats over the very screen it mirrors — without this the
+        captured frame contains the previous mirror image and the feed spirals
+        into an infinite-mirror (Droste) loop.  Re-applied on every open()
+        because the widget is destroyed on close (WA_DeleteOnClose).
+        """
         win = self._win
         if win is None:
             return
         try:
-            win.set_click_through(enabled)
+            hwnd = int(win.winId())
         except Exception as exc:  # noqa: BLE001
-            log.error("overlay click-through failed: %s", exc)
+            log.warning("capture exclusion: no hwnd yet (%s)", exc)
+            return
+        self._set(capture_excluded=_set_capture_exclusion(hwnd))
 
     # ------------------------------------------------------------------
     # global hotkey thread (plain Win32, no Qt)
@@ -439,7 +517,7 @@ def _build_pane(controller: OverlayController):
                 Qt.WindowType.FramelessWindowHint
                 | Qt.WindowType.WindowStaysOnTopHint
                 | Qt.WindowType.Tool  # hidden from taskbar + Alt+Tab
-                | Qt.WindowType.WindowTransparentForInput  # click-through
+                | Qt.WindowType.WindowTransparentForInput  # permanent read-only
                 | Qt.WindowType.WindowDoesNotAcceptFocus
             )
             super().__init__(None, flags)
@@ -467,18 +545,24 @@ def _build_pane(controller: OverlayController):
         def set_zoom(self, zoom: float):
             self._view.setZoomFactor(zoom)
 
+        def set_interact(self, enabled: bool):
+            # Scroll mode: toggle Qt's input-transparency flag at runtime.
+            # setWindowFlag hides the widget, so re-show exactly when it was
+            # visible before (WA_ShowWithoutActivating + the persistent
+            # WindowDoesNotAcceptFocus flag keep focus on the app beneath).
+            was_visible = self.isVisible()
+            self.setWindowFlag(
+                Qt.WindowType.WindowTransparentForInput, not enabled
+            )
+            if was_visible:
+                self.show()
+                self.raise_()
+
         def set_opacity(self, opacity: float):
             self.setWindowOpacity(opacity)
 
-        def set_click_through(self, enabled: bool):
-            flags = self.windowFlags()
-            if enabled:
-                flags |= Qt.WindowType.WindowTransparentForInput
-            else:
-                flags &= ~Qt.WindowType.WindowTransparentForInput
-            self.setWindowFlags(flags)  # hides the window...
-            if controller.status()["open"] and not controller.status()["hidden"]:
-                self.show()  # ...so restore it (WA_ShowWithoutActivating holds)
+        def run_js(self, script: str):
+            self._view.page().runJavaScript(script)
 
     pane = _Pane(controller.url)
     with controller._lock:

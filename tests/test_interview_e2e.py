@@ -375,34 +375,248 @@ class TestOverlayWSE2E:
         from fastapi.testclient import TestClient
 
         import server
+        from overlay_window import get_overlay
 
         with TestClient(server.app) as client:
-            with client.websocket_connect("/ws/interview") as ws:
-                hello = ws.receive_json()
-                assert hello["type"] == "status"
-                assert "overlay" in hello and "tab" in hello
+            try:
+                with client.websocket_connect("/ws/interview") as ws:
+                    hello = ws.receive_json()
+                    assert hello["type"] == "status"
+                    assert "overlay" in hello and "tab" in hello
 
-                ws.send_json({"action": "overlay_open"})
-                collected = _recv_until_all(ws, [
-                    lambda m: m.get("type") == "action_result"
-                    and m.get("action") == "overlay_open",
-                    lambda m: m.get("type") == "overlay_state"
-                    and m.get("open") is True,
-                ])
-                opened = next(m for m in collected
-                              if m.get("type") == "action_result"
-                              and m.get("action") == "overlay_open")
-                assert opened["ok"] is True and opened["open"] is True
-                time.sleep(1.0)  # pane paints
+                    # A RAM-starved first QtWebEngine boot can exceed the
+                    # server's action timeout while the pane still finishes
+                    # opening — a second tap then succeeds instantly.
+                    opened = None
+                    for attempt in range(2):
+                        ws.send_json({"action": "overlay_open"})
+                        result, state_ok = None, False
+                        deadline = time.time() + 30
+                        while time.time() < deadline and not (result and state_ok):
+                            msg = ws.receive_json()
+                            if (msg.get("type") == "action_result"
+                                    and msg.get("action") == "overlay_open"):
+                                result = msg
+                            elif (msg.get("type") == "overlay_state"
+                                  and msg.get("open") is True):
+                                state_ok = True
+                        if result and result.get("ok") and state_ok:
+                            opened = result
+                            break
+                        time.sleep(3)  # let the slow open finish, then re-tap
+                    assert opened is not None and opened["ok"] and opened["open"], (
+                        "overlay_open never succeeded: %r" % (opened,)
+                    )
+                    time.sleep(1.0)  # pane paints
 
-                ws.send_json({"action": "overlay_move", "dx": 12, "dy": 6})
-                moved, _ = _recv_until(ws, "action_result", actions=("overlay_move",))
-                assert moved["ok"] is True
+                    ws.send_json({"action": "overlay_move", "dx": 12, "dy": 6})
+                    moved, _ = _recv_until(ws, "action_result", actions=("overlay_move",))
+                    assert moved["ok"] is True
 
-                ws.send_json({"action": "overlay_close"})
-                closed, _ = _recv_until(ws, "action_result", actions=("overlay_close",))
-                assert closed["ok"] is True and closed["open"] is False
-                print("\nE2E WS->real pane OK")
+                    ws.send_json({"action": "overlay_close"})
+                    closed, _ = _recv_until(ws, "action_result", actions=("overlay_close",))
+                    assert closed["ok"] is True and closed["open"] is False
+                    print("\nE2E WS->real pane OK")
+            finally:
+                # Never leak an open pane into the next test (a timed-out
+                # overlay_open keeps running on the GUI thread).
+                try:
+                    ov = get_overlay()
+                    ov.submit(ov.close).result(timeout=10)
+                except Exception:  # noqa: BLE001
+                    pass
+
+
+class TestPaneMirrorE2E:
+    """The read-only pane renders exactly what the phone broadcasts:
+
+    live feed frames, quiz answers, counts, and toasts — proven by reading
+    the pane's own DOM from the Qt GUI thread.
+    """
+
+    @staticmethod
+    def _pane_js(ov, expr, timeout=15):
+        """Evaluate JS inside the pane's page (GUI thread, nested event loop)."""
+        def run():
+            from PySide6.QtCore import QEventLoop, QTimer
+
+            if ov._win is None:
+                return None
+            box = {"v": None}
+            loop = QEventLoop()
+            ov._win._view.page().runJavaScript(
+                expr, lambda v: (box.update({"v": v}), loop.quit())
+            )
+            QTimer.singleShot(5000, loop.quit)
+            loop.exec()
+            return box["v"]
+
+        return ov.submit(run).result(timeout=timeout)
+
+    def _wait_js(self, ov, expr, probe, timeout=8.0):
+        deadline = time.time() + timeout
+        value = None
+        while time.time() < deadline:
+            value = self._pane_js(ov, expr)
+            if probe(value):
+                return value
+            time.sleep(0.3)
+        return value
+
+    @staticmethod
+    def _start_backend():
+        """Serve the real app over HTTPS in-process (no extra process).
+
+        The pane always loads a live https origin — TestClient alone cannot
+        satisfy that — so E2E binds its own uvicorn thread on a side port.
+        """
+        import threading
+
+        import uvicorn
+
+        import server
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cert, key = os.path.join(root, "cert.pem"), os.path.join(root, "key.pem")
+        if not (os.path.exists(cert) and os.path.exists(key)):
+            from gen_cert import generate_self_signed_cert
+
+            generate_self_signed_cert(root)
+
+        port = 8443
+        config = uvicorn.Config(
+            server.app, host="127.0.0.1", port=port,
+            ssl_certfile=cert, ssl_keyfile=key, log_level="warning",
+        )
+        srv = uvicorn.Server(config)
+        thread = threading.Thread(target=srv.run, name="e2e-uvicorn", daemon=True)
+        thread.start()
+        deadline = time.time() + 15
+        while time.time() < deadline and not srv.started:
+            time.sleep(0.1)
+        if not srv.started:
+            srv.should_exit = True
+            pytest.skip(f"could not bind 127.0.0.1:{port} for pane E2E")
+        return srv, thread, port
+
+    def test_pane_mirrors_feed_answers_and_is_read_only(self):
+        import server
+        from overlay_window import OVERLAY_URL, get_overlay
+
+        ov = get_overlay()
+        # Drop any pane leaked by a prior test — _ensure_window would return
+        # it unchanged, still bound to the old (dead) URL.
+        try:
+            ov.submit(ov.close).result(timeout=10)
+        except Exception:  # noqa: BLE001
+            pass
+        srv, thread, port = self._start_backend()
+        orig_url = ov.url
+        ov.url = f"https://127.0.0.1:{port}/?display=overlay"
+        try:
+            st = ov.submit(ov.open).result(timeout=30)
+            assert st["open"], st
+            assert st["capture_excluded"] is True, st
+            time.sleep(2.5)  # QtWebEngine loads the https mirror page + WS
+
+            # --- read-only: overlay variant kills every pointer event ---
+            pe = self._wait_js(
+                ov, "getComputedStyle(document.body).pointerEvents",
+                lambda v: v == "none", timeout=8,
+            )
+            assert pe == "none", pe
+            cls = self._pane_js(ov, "document.body.className")
+            assert "display-overlay" in cls, cls
+
+            # --- quiz answer broadcast renders inside the pane ---
+            server.session.emit({"type": "quiz_result", "result": {
+                "detected": True, "type": "MCQ",
+                "question": "Which port does HTTPS use?",
+                "answer": "B) 443", "provider": "groq_vision",
+            }})
+            txt = self._wait_js(
+                ov, "document.getElementById('answerContent').textContent",
+                lambda v: v and "443" in v,
+            ) or ""
+            assert "443" in txt, f"pane did not render the answer: {txt!r}"
+            count = self._pane_js(ov, "document.getElementById('countText').textContent")
+            assert count == "1 answered", count
+
+            # --- live feed frames arrive in the pane ---
+            # Synthetic camera (same pattern as test_live_stream): a real
+            # dxcam grab can block on a static desktop, so never depend on it.
+            import threading
+
+            import numpy as np
+
+            class _FakeCamera:
+                def grab(self, region=None):
+                    left, top, right, bottom = region
+                    return np.full((bottom - top, right - left, 3), 42, dtype=np.uint8)
+
+                def stop(self):
+                    pass
+
+            screen = server.screen
+            try:
+                screen.set_region(0, 0, 640, 400)
+                screen._frame.clear()
+                with screen._jpeg_lock:
+                    screen._jpeg = None
+                    screen._jpeg_sequence = 0
+                    screen._jpeg_captured_at = 0.0
+                screen._camera = _FakeCamera()
+                screen._running = True
+                screen._thread = threading.Thread(
+                    target=screen._capture_loop, daemon=True
+                )
+                screen._thread.start()
+            except Exception as exc:  # noqa: BLE001
+                pytest.skip(f"screen capture unavailable: {exc}")
+            try:
+                region = {"left": 0, "top": 0, "right": 640, "bottom": 400}
+                server.session.emit(
+                    {"type": "stream_state", "running": True, "region": region}
+                )
+                width = self._wait_js(
+                    ov, "document.getElementById('streamPreview').naturalWidth",
+                    lambda v: bool(v) and v > 0, timeout=10,
+                )
+                assert width and width > 0, "pane never received a live frame"
+                print(f"\nE2E pane live feed OK ({width}px wide frame)")
+
+                # --- toast relay mirrors into the pane ---
+                server.session.emit(
+                    {"type": "toast", "text": "E2E mirrored toast", "nonce": "e2e"}
+                )
+                shown = self._wait_js(
+                    ov, "document.getElementById('toast').textContent",
+                    lambda v: v == "E2E mirrored toast",
+                )
+                assert shown == "E2E mirrored toast", shown
+            finally:
+                server.screen.stop()
+                server.session.emit(
+                    {"type": "stream_state", "running": False, "region": None}
+                )
+
+            # stream stop tears the pane's frame loop down
+            stopped = self._wait_js(
+                ov, "document.getElementById('streamPreview').style.display",
+                lambda v: v == "none", timeout=5,
+            )
+            assert stopped == "none", stopped
+            print("\nE2E pane mirror (read-only, answer, feed, toast) OK")
+        finally:
+            try:
+                ov.submit(ov.close).result(timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
+            ov.url = orig_url
+            srv.should_exit = True
+            thread.join(timeout=5)
+        # Deliberately does NOT stop the controller: TestOverlayE2E below
+        # owns the singleton shutdown for this process.
 
 
 class TestOverlayE2E:
@@ -424,16 +638,65 @@ class TestOverlayE2E:
             assert st["w"] == w0 + 40, st
 
             st = ov.submit(ov.zoom_step, 0.1).result(timeout=10)
-            assert st["zoom"] == 1.1, st
+            assert st["zoom"] == 0.85, st  # 0.75 default + 0.1 step
 
             st = ov.submit(ov.opacity_step, -0.1).result(timeout=10)
             assert st["opacity"] == 0.9, st
 
-            st = ov.submit(ov.set_click_through, False).result(timeout=10)
-            assert st["click_through"] is False, st
+            # Scroll mode: unlock must clear WS_EX_TRANSPARENT on the real
+            # HWND (native wheel/scrollbar input works), lock must restore
+            # it — and WS_EX_NOACTIVATE must survive throughout so the pane
+            # never steals focus from the app beneath.
+            import ctypes
+            import ctypes.wintypes
 
-            st = ov.submit(ov.set_click_through, True).result(timeout=10)
-            assert st["click_through"] is True, st
+            u32 = ctypes.windll.user32
+            u32.GetWindowLongPtrW.argtypes = [
+                ctypes.wintypes.HWND,
+                ctypes.c_int,
+            ]
+            u32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+            GWL_EXSTYLE, WS_EX_TRANSPARENT, WS_EX_NOACTIVATE = -20, 0x20, 0x08000000
+            pane_hwnd = ctypes.wintypes.HWND(int(ov._win.winId()))
+
+            def _exstyle():
+                return u32.GetWindowLongPtrW(pane_hwnd, GWL_EXSTYLE)
+
+            st = ov.submit(ov.set_interact, True).result(timeout=10)
+            assert st["interact"] is True, st
+            assert not (_exstyle() & WS_EX_TRANSPARENT), hex(_exstyle())
+            assert _exstyle() & WS_EX_NOACTIVATE, hex(_exstyle())
+
+            st = ov.submit(ov.set_interact, False).result(timeout=10)
+            assert st["interact"] is False, st
+            assert _exstyle() & WS_EX_TRANSPARENT, hex(_exstyle())
+
+            # unlock + Hide -> fail-closed re-lock while the pane hides
+            ov.submit(ov.set_interact, True).result(timeout=10)
+            st = ov.submit(ov.set_hidden, True).result(timeout=10)
+            assert st["interact"] is False, st
+            assert _exstyle() & WS_EX_TRANSPARENT, hex(_exstyle())
+
+            # pane is permanently read-only: no click-through toggle exists
+            assert "click_through" not in st, st
+            assert not hasattr(ov, "set_click_through")
+
+            # the pane HWND must be excluded from every screen capture —
+            # otherwise the feed reflects the pane and loops to infinity
+            import ctypes
+            import ctypes.wintypes
+
+            hwnd = ctypes.wintypes.HWND(int(ov._win.winId()))
+            aff = ctypes.wintypes.DWORD()
+            get_aff = ctypes.windll.user32.GetWindowDisplayAffinity
+            get_aff.argtypes = [
+                ctypes.wintypes.HWND,
+                ctypes.POINTER(ctypes.wintypes.DWORD),
+            ]
+            get_aff.restype = ctypes.wintypes.BOOL
+            assert get_aff(hwnd, ctypes.byref(aff)), "GetWindowDisplayAffinity failed"
+            assert aff.value == 0x11, hex(aff.value)
+            assert st["capture_excluded"] is True, st
 
             st = ov.submit(ov.set_hidden, True).result(timeout=10)
             assert st["hidden"] is True, st

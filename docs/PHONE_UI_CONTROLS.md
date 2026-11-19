@@ -98,6 +98,12 @@ so an open Mirror pane follows along.
 | **Done** *(while answering)* | Commits your spoken answer immediately — skips the 6-second silence detector | Right when you finish talking |
 
 ### 5.4 Screen & context row (both subtabs)
+
+The row is a **3-column button grid** (`Groq | Select Region | Quick Capture`
+/ `Solve | Next Step | Auto` / `Problem | Code | + Segment` / `Design`), so
+every target stays thumb-sized on a phone and comfortable in the pane.
+Start/Stop use 2 columns; mock actions a 2×2 grid.
+
 | Control | What it does | When to use |
 |---|---|---|
 | **Groq ⇄ Gemini** | Swaps the answering model mid-session — full history carries over; flips itself automatically on provider failure | When Groq is slow/rate-limited (label = active model) |
@@ -105,10 +111,11 @@ so an open Mirror pane follows along.
 | **Quick Capture** | One screenshot of the region + preview overlay | To eyeball exactly what will be sent |
 | **Solve** | Region frame (→ stacked segments → stashed Problem text) + history → spoken answer + code + next steps | You want the answer to the current coding problem |
 | **Next Step** | Same inputs, but returns only the *next increment* of the solution | Building an answer step-by-step |
-| **Auto: On/Off** | When On, a coding question detected in Live mode auto-triggers Solve in the background | Hands-free solving; Off = manual Solve only |
+| **Auto: On/Off** | When On, a coding question detected in Live mode auto-triggers Solve in the background, and an active Design session re-reads the panel every ~15 s (see 5.7). Failures surface as a toast (`Auto assist: No screen frame…`) instead of failing silently — throttle/duplicate skips stay quiet | Hands-free solving; Off = manual Solve only |
 | **Problem** | After you **physically copy** the problem text with Ctrl+C, tap to stash the clipboard into context | Copy-paste-disabled platforms; text too long to screenshot |
 | **Code** | Same, for your starter/partial code | You copied your current code |
 | **+ Segment** | Screenshots the region into a stack (up to 3 sent as multi-images) | Long problem that spans multiple screens — scroll, tap, repeat |
+| **Design** | Starts a system-design session from the question panel (frame → stashed Problem text). While a session runs the button becomes **Next ▸** (region re-read) | The interviewer posts a "Design a …" question |
 
 ### 5.5 Context chips (below the row)
 | Control | What it does |
@@ -118,33 +125,103 @@ so an open Mirror pane follows along.
 
 ### 5.6 During a live/mock session
 - **Status line** — state machine (`listening`, `evaluating`, …)
+- **Audio chip** *(live only)* — `Audio: starting / ok / silent / no audio /
+  no transcript` beside the status line: green = hearing the interviewer,
+  amber/red = capture problem. The first transition into each failure also
+  toasts once per session (e.g. `Live audio check: No PC audio — is the
+  meeting playing on this PC?`), so a dead capture can't hide behind
+  "Auto: On"
+- **Rate chip** — amber `Rate limit — retry in Ns` beside the audio chip
+  while the rate gate is backing off (all model calls go through it: instead
+  of failing, the app waits its turn — exponential backoff, provider
+  failover Groq⇄Gemini, Gemini key rotation). It clears itself when a call
+  recovers
 - **History** — full conversation; answers with code include **Copy**
-- **Caption strip** — live partial transcript while the interviewer speaks
+- **Caption strip** — always visible while a session runs: live partial
+  transcript while the interviewer speaks, and a `🎙 Listening for the
+  interviewer…` placeholder (mirroring the audio chip's message) between
+  utterances. It only hides when the session stops — you never have to
+  *assume* what the app is hearing
+
+### 5.7 Design interview mode (system-design questions)
+
+Start it with the **Design** button (live session required, region set over
+the question panel — or the Problem text stashed as a fallback). The app
+extracts the question **and its instruction ladder** (clarify → high-level
+design → deep dive → bottlenecks), then follows that ladder for the whole
+multi-turn answer.
+
+| Control / element | What it does |
+|---|---|
+| **Design bar** (appears while active) | Stage stepper `Clarify → Needs → Design → Deep dive → Bottlenecks → Done`, the extracted question, and a `Next: …` hint from the last turn |
+| **Next ▸** (design bar *and* the Design button) | Re-reads the region and continues from the newest instruction/feedback on the panel — for text-only instructions the STT never hears |
+| **Auto: On** *(while active)* | Also re-reads the panel automatically every ~15 s (non-overlay client only, server floors it at 12 s, rate gate serializes calls) |
+| **📋 Copy image** (design bar + every diagram card) | Renders the current mermaid diagram to PNG on the clipboard — tap the whiteboard, Ctrl+V |
+| **Code** on a diagram card | Copies the mermaid source instead (also the automatic fallback if mermaid fails to render) |
+| **End** | Leaves the design session (state cleared; also clears automatically on Stop) |
+
+How the session stays consistent for 20+ minutes:
+
+- Every turn returns **state patches** — clarified facts, architecture
+  decisions, the full mermaid diagram, current stage — merged server-side.
+  Verbatim history is capped at 6 turns because everything older already
+  lives in that state, so the prompt size never grows and early
+  requirements are never forgotten.
+- Answers append to the normal history, so questions *after* the design
+  session still reference what was decided.
+- Diagrams render inline as **diagram cards** (phone + pane) with
+  Copy image / Code buttons.
+- Spoken turns are detected by live STT (every committed utterance advances
+  the session); region re-reads catch silent on-screen instructions.
 
 ---
 
 ## 6. Mirror tab — desktop overlay pane controls
 
 The pane is a frameless, always-on-top window on the PC that mirrors this
-app (same tabs, follows your active tab). Default mode is **click-through**
-(mouse passes straight through to the browser underneath).
+app (same tabs, follows your active tab). It is **read-only by default**:
+the mouse always passes through to whatever is underneath (never to the
+pane), and the page itself ignores all pointer events — except while
+**Scroll mode** is unlocked (see below). The pane is also **excluded from
+screen capture** at the OS level (`WDA_EXCLUDEFROMCAPTURE`): it never
+appears in the live feed, the phone view, or any recording — the feed
+always shows what's *behind* the pane, so the mirror can never reflect
+itself into an infinite-mirror loop.
+
+### What the pane mirrors (everything you can see on the phone)
+
+- **Live region feed** — the pane starts/stops its own frame loop whenever
+  capture starts or stops anywhere (even after the pane is already open)
+- **Vision answers** — answer panel, badges, explanation, sources, the
+  answered count, and the cooldown countdown arrive over the same broadcast
+- **Toasts** — every toast the phone shows appears on the pane too
+- **Interview state** — Live/Mock subtab, Start/Stop buttons, status dot and
+  line, history, transcripts, captions, mock questions/feedback
+- **Context & model** — Problem/Code/Segment chips, active provider
+  (Groq ⇄ Gemini), Auto: On/Off
+- **Tabs & pane controls** — tab switches, plus every Mirror-panel control
+  (size/zoom/opacity feedback)
+
+Settings and QR popups and input fields (role, level, mic, keys) stay
+phone-only — they are controls, not display content.
 
 | Control | What it does | When to use |
 |---|---|---|
-| **Open Pane** | Creates/shows the overlay window on the PC (parks at the right edge on first open) | When you want the mirror visible on the PC |
+| **Open Pane** | Creates/shows the overlay window on the PC (parks at the right edge on first open, fully on-screen; default size **768×800**, clamped to fit the screen — e.g. 768×768 on a 768-high display) | When you want the mirror visible on the PC |
 | **Close Pane** | Destroys the window (position/size/zoom/opacity are remembered) | Done with the mirror |
 | **Hide / Show** | Instantly hides the pane without closing it (panic button) | The moment someone approaches — or use the PC hotkey below |
 | **Drag pad** | Touch-drag inside the pad → the pane follows (deltas flush every 50 ms) | Repositioning the pane without touching the PC |
 | **Width −/+** | Resize width by 40 px per tap (clamped to screen) | Getting wider for reading / narrower for stealth |
 | **Height −/+** | Resize height by 40 px per tap | Same, vertical axis |
-| **Zoom −/+** | Scales the pane's *content* 0.5×–2.0× in 0.1 steps (window size unchanged) | Text too small/large without changing the footprint |
+| **Zoom −/+** | Scales the pane's *content* 0.5×–2.0× in 0.1 steps — starts at **0.75×** (compact desktop text/buttons; phone UI unaffected); window size unchanged | Text too small/large without changing the footprint |
 | **Opacity −/+** | Window transparency 20 %–100 % in 10 % steps | Blending the pane into the page behind it |
-| **Tiny / Compact / Standard** | Instant presets: 240×150 / 420×560 / 640×800 | Rapid size jumps (Tiny = near-invisible corner readout) |
+| **Scroll mode** — 🔒 **Locked** / 🔓 **Unlocked** | Unlocks native scrolling **on the pane itself**: put the PC mouse over the answer/conversation panel and wheel-scroll, drag the (always-visible) scrollbar, or click its arrows. Only those two panels become interactive — every other pane area still ignores clicks, and the pane never takes focus. Auto re-locks on **Hide**, **Close pane**, phone disconnect, or tapping Locked again | Reading long solutions directly on the PC with the mouse |
+| **Tiny / Compact / Standard** | Instant presets: 240×150 / 420×560 / 768×800 | Rapid size jumps (Tiny = near-invisible corner readout) |
 | **Center** | Moves the pane to the center of the screen | Quick reposition after a drag |
-| **Click-through: On/Off** | On = mouse passes through (stealth); Off = you can tap the mirrored UI on the PC | Only turn Off when you intentionally want to interact with the pane |
 
-**Status line** — `Pane closed` or `Pane open — 640×800 @ (1240,40) · 100% ·
-click-through`, turning green while open. Updates live from server state.
+**Status line** — `Pane closed`, `Pane hidden`, or `Pane open — 768×800 @
+(1112,40) · 100% · read-only` (or `· scroll unlocked` while Scroll mode is
+on), turning green while open. Updates live from server state.
 
 ### PC-side pane controls
 | Control | What it does |
@@ -152,11 +229,28 @@ click-through`, turning green while open. Updates live from server state.
 | **Ctrl+Shift+`** (global hotkey) | Show/hide the pane instantly, even from inside a fullscreen browser — works while the phone is in your pocket |
 
 **Behavior notes**
-- The pane never steals focus and never appears in the taskbar or Alt+Tab
+- The pane never steals focus and never appears in the taskbar or Alt+Tab.
+  While Scroll mode is **Locked** (the default) mouse and touch pass
+  through to the window below; while **Unlocked**, the pane area intercepts
+  the mouse (only its two scroll panels respond) until it re-locks
+- While unlocked, an amber **SCROLL ON** badge appears on the pane so a
+  forgotten unlock is always visible — and Hide, Close, and phone
+  disconnect re-lock it automatically
+- The pane is invisible to **every** capture API on the PC: the live feed,
+  the phone's view, screenshots, and even a full-screen recording show only
+  what's behind it (this is what prevents the infinite-mirror feedback loop)
 - Tab switches on the phone are mirrored live; the pane reconnects by itself
 - Opening the pane costs ~200 MB RAM; Close frees it
-- In a *tab-only* screen share the pane is invisible; a full-screen recording
-  would include its pixels (share the exam tab, not the whole screen)
+- In a *tab-only* screen share the pane is already invisible; a full-screen
+  recording is safe too — the OS excludes the pane's pixels from capture
+- Caveat: a normal **browser window** showing this app *inside* the captured
+  region can still pick up its own preview (Windows only lets our own windows
+  opt out) — keep such windows outside the region
+- Long answers: unlock **Scroll mode** and scroll the pane natively with the
+  mouse — or scroll the answer/conversation on the phone while the pane is
+  locked and the pane mirrors the position live (an unlocked pane mirrors
+  its scrolls back to the phone too). New answers auto-reveal (solution at
+  the top, conversation at the newest entry) on both screens
 
 ---
 
@@ -180,6 +274,6 @@ click-through`, turning green while open. Updates live from server state.
 3. **Hands-free during live interview:** Start Live + **Auto: On** — coding
    questions auto-solve; watch the phone or the pane.
 4. **Stealth mirror:** Open Pane → **Tiny** preset → **Opacity −** a few
-   times → leave **Click-through: On**; hide with **Ctrl+Shift+`**.
+   times (mouse already passes through); hide with **Ctrl+Shift+`**.
 5. **Groq rate-limited:** tap **Groq ⇄ Gemini** — conversation and stashes
    carry over automatically.

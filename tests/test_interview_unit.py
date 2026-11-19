@@ -320,6 +320,115 @@ class TestLiveMode:
         assert not session.live_stt.is_running()
 
 
+def _health_msgs(session, timeout=0.5):
+    msgs = _drain(session.out_queue, timeout=timeout)
+    return (
+        [m for m in msgs if m.get("type") == "audio_health"],
+        [m for m in msgs if m.get("type") == "error"],
+    )
+
+
+class TestLiveHealth:
+    """audio_health broadcast: the phone must SEE capture/STT truth."""
+
+    def test_no_frames_reports_dead_and_warns_once(self, session):
+        session.start_live()
+        # lambda first, then throttle reset: the background endpoint thread
+        # must never consume the tick window while activity is still absent.
+        session.loopback.activity = lambda: {
+            "running": True, "frames": 0, "heard": False,
+            "last_frame_age": None, "last_loud_age": None,
+        }
+        session._health_at = 0.0
+        session._live_started_at = time.monotonic() - 30.0  # past grace
+        session._live_health_tick(time.monotonic())
+        health, errors = _health_msgs(session)
+        assert health and health[-1]["level"] == "dead"
+        assert health[-1]["audio"] is False
+        assert errors and "No PC audio" in errors[0]["message"]
+
+        # unchanged state -> no duplicate broadcast, no duplicate toast
+        session._health_at = 0.0
+        session._live_health_tick(time.monotonic())
+        health2, errors2 = _health_msgs(session)
+        assert health2 == []
+        assert errors2 == []
+        session.stop_live()
+
+    def test_healthy_audio_reports_ok(self, session):
+        session.start_live()
+        session.loopback.activity = lambda: {
+            "running": True, "frames": 100, "heard": True,
+            "last_frame_age": 0.1, "last_loud_age": 0.2,
+        }
+        session._health_at = 0.0
+        session._live_started_at = time.monotonic() - 5.0
+        session._live_health_tick(time.monotonic())
+        health, errors = _health_msgs(session)
+        assert health, _drain(session.out_queue, timeout=0.1)
+        assert health[-1]["level"] == "ok"
+        assert health[-1]["audio"] is True
+        assert health[-1]["heard"] is True
+        assert errors == []
+        session.stop_live()
+
+    def test_never_heard_reports_quiet(self, session):
+        session.start_live()
+        session.loopback.activity = lambda: {
+            "running": True, "frames": 500, "heard": False,
+            "last_frame_age": 0.1, "last_loud_age": None,
+        }
+        session._health_at = 0.0
+        session._live_started_at = time.monotonic() - 30.0
+        session._live_health_tick(time.monotonic())
+        health, errors = _health_msgs(session)
+        assert health and health[-1]["level"] == "quiet"
+        assert errors and "silence" in errors[0]["message"]
+        session.stop_live()
+
+    def test_voices_without_transcript_reports_stt(self, session):
+        session.start_live()
+        session.loopback.activity = lambda: {
+            "running": True, "frames": 500, "heard": True,
+            "last_frame_age": 0.1, "last_loud_age": 1.0,
+        }
+        session._health_at = 0.0
+        session._live_started_at = time.monotonic() - 30.0
+        session._last_stt_at = 0.0  # STT never produced anything
+        session._live_health_tick(time.monotonic())
+        health, _ = _health_msgs(session)
+        assert health and health[-1]["level"] == "stt"
+        assert health[-1]["stt"] is False
+        session.stop_live()
+
+    def test_silence_does_not_warn_transcription(self, session):
+        """A quiet interviewer must NOT trip the STT warning — only voices
+        without transcription do."""
+        session.start_live()
+        session.loopback.activity = lambda: {
+            "running": True, "frames": 500, "heard": True,
+            "last_frame_age": 0.1, "last_loud_age": 55.0,
+        }
+        session._health_at = 0.0
+        session._live_started_at = time.monotonic() - 60.0
+        session._last_stt_at = time.monotonic() - 60.0  # spoke once, long ago
+        session._live_health_tick(time.monotonic())
+        health, errors = _health_msgs(session)
+        assert health and health[-1]["level"] == "ok"
+        assert health[-1]["stt"] is True
+        assert errors == []
+        session.stop_live()
+
+    def test_missing_activity_method_is_harmless(self, session):
+        """FakeCapture (tests) and any future loopback without activity()."""
+        session.start_live()
+        session._health_at = 0.0
+        session._live_health_tick(time.monotonic())  # must not raise
+        health, _ = _health_msgs(session)
+        assert health == []  # skipped, nothing emitted
+        session.stop_live()
+
+
 class TestMockMode:
     def test_start_mock_generates_question(self, session, monkeypatch):
         import interview_session as mod
@@ -664,6 +773,62 @@ class TestScreenFusion:
         second = session.solve_screen(variant="solve", auto=True)
         assert second["ok"] is False
         assert second["error"] in ("throttled", "duplicate frame")
+        session.stop_live()
+
+    def test_safe_auto_solve_surfaces_no_frame(self, session):
+        """A missing region used to fail SILENTLY while Auto showed On."""
+        session.start_live()
+        session._safe_auto_solve()  # no frame, nothing stashed
+        msg = _wait_for(session.out_queue, "error", timeout=4)
+        assert msg is not None, _drain(session.out_queue, timeout=0.5)
+        assert "Auto assist" in msg["message"]
+        assert "No screen frame" in msg["message"]
+        session.stop_live()
+
+    def test_safe_auto_solve_quiet_on_expected_skips(self, session, monkeypatch):
+        import time as _time
+        import interview_session as mod
+        monkeypatch.setattr(mod, "solve_with_screen", lambda *a, **k: {
+            "detected": True, "answer_text": "x", "language": "n/a",
+            "code_solution": "", "next_steps": [],
+        })
+        session.frame_provider = lambda: (b"same-frame", 1, _time.time())
+        session.start_live()
+        assert session.solve_screen(variant="solve", auto=True)["ok"] is True
+        session._safe_auto_solve()  # throttled -> stays silent
+        errors = [m for m in _drain(session.out_queue, timeout=1.0)
+                  if m.get("type") == "error"]
+        assert errors == []
+        session.stop_live()
+
+    def test_safe_auto_solve_crash_toasts(self, session, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError("kaput")
+        session.start_live()
+        monkeypatch.setattr(session, "solve_screen", boom)
+        session._safe_auto_solve()
+        msg = _wait_for(session.out_queue, "error", timeout=4)
+        assert msg is not None, _drain(session.out_queue, timeout=0.5)
+        assert "Auto assist crashed" in msg["message"]
+        assert "kaput" in msg["message"]
+        session.stop_live()
+
+    def test_solve_screen_exception_returns_error_without_broadcast(
+            self, session, monkeypatch):
+        """Manual Solve toasts via action_result — no duplicate broadcast."""
+        import interview_session as mod
+        session.start_live()
+        session.frame_provider = lambda: (b"x", 1, 0.0)
+        monkeypatch.setattr(
+            mod, "solve_with_screen",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("vision down")),
+        )
+        result = session.solve_screen(variant="solve")
+        assert result["ok"] is False
+        assert "vision down" in result["error"]
+        errors = [m for m in _drain(session.out_queue, timeout=1.0)
+                  if m.get("type") == "error"]
+        assert errors == []
         session.stop_live()
 
     def test_set_auto_assist_toggles(self, session):
@@ -1110,3 +1275,422 @@ class TestSessionProviderSwitch:
         assert msg["reason"] == "fallback"
         assert msg["previous"] == "groq"
         assert msg["active"] == "gemini"
+
+
+# ---------------------------------------------------------------------------
+# rate gate (spacing + backoff instead of failure toasts)
+# ---------------------------------------------------------------------------
+
+class FakeTime:
+    """Deterministic clock/sleep for RateGate."""
+
+    def __init__(self):
+        self.t = 0.0
+        self.sleeps = []
+
+    def clock(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.sleeps.append(round(seconds, 3))
+        self.t += seconds
+
+
+class TestRateGate:
+    def _gate(self, ft, **kw):
+        from rate_gate import RateGate
+        kw.setdefault("min_interval", 2.0)
+        kw.setdefault("base_delay", 2.0)
+        return RateGate(sleep=ft.sleep, clock=ft.clock, **kw)
+
+    def test_min_interval_spaces_call_starts(self):
+        ft = FakeTime()
+        gate = self._gate(ft)
+        assert gate.call(lambda: "a") == "a"
+        assert gate.call(lambda: "b") == "b"
+        assert ft.sleeps == [2.0]
+
+    def test_rate_limit_retries_then_succeeds(self):
+        ft = FakeTime()
+        gate = self._gate(ft)
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise RuntimeError("429 Too Many Requests")
+            return "ok"
+
+        waits = []
+        result = gate.call(flaky, on_wait=lambda secs, what: waits.append(secs), what="answer")
+        assert result == "ok"
+        assert calls["n"] == 3
+        assert len(ft.sleeps) >= 2  # at least the two backoffs (jitter + spacing may add more)
+        assert any(w > 0 for w in waits)
+        assert waits[-1] == 0  # recovery clears the banner
+
+    def test_non_rate_limit_error_raises_immediately(self):
+        ft = FakeTime()
+        gate = self._gate(ft)
+
+        def boom():
+            raise RuntimeError("kaput")
+
+        with pytest.raises(RuntimeError, match="kaput"):
+            gate.call(boom)
+        assert ft.sleeps == []  # no backoff for unrelated failures
+
+    def test_gives_up_after_waiting_budget(self):
+        ft = FakeTime()
+        gate = self._gate(ft, timeout=5.0)
+
+        def always_limited():
+            raise RuntimeError("quota exceeded (429)")
+
+        with pytest.raises(RuntimeError, match="gave up"):
+            gate.call(always_limited, on_wait=lambda s, w: None)
+        assert ft.t >= 5.0  # the budget was actually spent waiting
+
+    def test_run_passes_router_through(self):
+        from provider_router import ProviderRouter
+        ft = FakeTime()
+        gate = self._gate(ft, min_interval=0.0)
+        router = ProviderRouter()
+        result, served = gate.run(
+            router, {"groq": lambda: "g", "gemini": lambda: "m"})
+        assert (result, served) == ("g", "groq")
+
+    def test_is_rate_limited_markers(self):
+        from rate_gate import is_rate_limited
+        assert is_rate_limited("HTTP 429")
+        assert is_rate_limited("RESOURCE_EXHAUSTED: quota")
+        assert is_rate_limited("Service Unavailable, retry later")
+        # substring traps: bare "rate" must NOT match inside ordinary words
+        assert not is_rate_limited("iterate over the keys")
+        assert not is_rate_limited("connection reset by peer")
+
+
+# ---------------------------------------------------------------------------
+# design interview mode: parsers
+# ---------------------------------------------------------------------------
+
+class TestDesignParsers:
+    def test_parse_design_response_full_blocks(self):
+        from interview_pipeline import _parse_design_response
+        text = (
+            "STAGE: high_level\n"
+            "SPOKEN: So I would put a load balancer in front of two app "
+            "servers backed by a cache.\n"
+            "MERMAID: flowchart TD\n  LB[Load Balancer] --> A[App]\n"
+            "FACTS: 100M reads/day; p99 under 200ms\n"
+            "DECISIONS: Use Redis for the hot cache\n"
+            "NEXT: Deep dive on how reads hit the cache."
+        )
+        result = _parse_design_response(text)
+        assert result["stage"] == "high_level"
+        assert result["spoken"].startswith("So I would put")
+        assert result["mermaid"].startswith("flowchart TD")
+        assert result["facts"] == ["100M reads/day", "p99 under 200ms"]
+        assert result["decisions"] == ["Use Redis for the hot cache"]
+        assert result["next"].startswith("Deep dive")
+
+    def test_parse_design_response_na_means_keep(self):
+        from interview_pipeline import _parse_design_response
+        text = (
+            "STAGE: clarify\n"
+            "SPOKEN: Quick question — is this read-heavy?\n"
+            "MERMAID: N/A\nFACTS: N/A\nDECISIONS: N/A\nNEXT: N/A"
+        )
+        result = _parse_design_response(text)
+        assert result["mermaid"] == ""      # keep previous diagram
+        assert result["facts"] == []        # no new facts
+        assert result["decisions"] == []
+        assert result["next"] == ""
+
+    def test_parse_design_response_format_drift_falls_back(self):
+        from interview_pipeline import _parse_design_response
+        result = _parse_design_response("I would start by asking about scale.")
+        assert result["spoken"] == "I would start by asking about scale."
+
+    def test_parse_design_response_unknown_stage_dropped(self):
+        from interview_pipeline import _parse_design_response
+        result = _parse_design_response(
+            "STAGE: dancing\nSPOKEN: Hello there.\nMERMAID: N/A\n"
+            "FACTS: N/A\nDECISIONS: N/A\nNEXT: N/A")
+        assert result["stage"] == ""
+        assert result["spoken"] == "Hello there."
+
+    def test_parse_design_extract(self):
+        from interview_pipeline import _parse_design_extract
+        text = (
+            "QUESTION: Design a rate limiter for our API gateway.\n"
+            "INSTRUCTIONS:\n- Start with clarifying requirements\n"
+            "- Give a high-level design\n- Deep dive on bottlenecks"
+        )
+        result = _parse_design_extract(text)
+        assert result["question"].startswith("Design a rate limiter")
+        assert len(result["instructions"]) == 3
+        assert result["instructions"][0] == "Start with clarifying requirements"
+
+    def test_ladder_defaults_when_empty(self):
+        from interview_pipeline import _design_ladder_text, DESIGN_DEFAULT_LADDER
+        assert "1." in _design_ladder_text([])
+        assert len(_design_ladder_text([]).splitlines()) == len(DESIGN_DEFAULT_LADDER)
+
+
+# ---------------------------------------------------------------------------
+# design interview mode: pipeline calls (models stubbed)
+# ---------------------------------------------------------------------------
+
+class TestDesignPipeline:
+    def test_design_turn_parses_canned_response(self, monkeypatch):
+        import interview_pipeline as ip
+        captured = {}
+
+        def fake_chat(model, messages, *, max_tokens, timeout, compound=False):
+            captured["messages"] = messages
+            return ("STAGE: requirements\n"
+                    "SPOKEN: We need about 10k writes per second.\n"
+                    "MERMAID: flowchart TD\n  C[Client] --> G[Gateway]\n"
+                    "FACTS: 10k writes/sec; multi-region\n"
+                    "DECISIONS: Append-only event log\n"
+                    "NEXT: Sketch the high-level design.")
+
+        monkeypatch.setattr(ip, "_chat", fake_chat)
+        state = {
+            "question": "Design a notification system",
+            "instructions": ["Clarify requirements", "High-level design"],
+            "stage": "clarify", "facts": [], "decisions": [], "diagram": "",
+        }
+        result = ip.design_turn("How about throughput?", state)
+        assert "error" not in result
+        assert result["stage"] == "requirements"
+        assert "10k writes" in result["spoken"]
+        assert result["mermaid"].startswith("flowchart TD")
+        assert result["facts"] == ["10k writes/sec", "multi-region"]
+        assert result["decisions"] == ["Append-only event log"]
+        assert result["provider"] == "groq"
+        # prompt carries question + ladder + state
+        joined = "\n".join(str(m.get("content")) for m in captured["messages"])
+        assert "notification system" in joined
+        assert "Clarify requirements" in joined
+
+    def test_design_turn_returns_error_when_all_providers_fail(self, monkeypatch):
+        import interview_pipeline as ip
+
+        def fail(*a, **k):
+            raise RuntimeError("kaput")
+
+        monkeypatch.setattr(ip, "_chat", fail)
+        monkeypatch.setattr(ip, "_gemini_chat", fail)
+        result = ip.design_turn("hello", {"question": "Q", "instructions": []})
+        assert "error" in result
+        assert "kaput" in result["error"]
+
+    def test_design_extract_uses_problem_text_alone(self, monkeypatch):
+        import interview_pipeline as ip
+
+        def fake_chat(model, messages, *, max_tokens, timeout, compound=False):
+            return ("QUESTION: Design a chat system\n"
+                    "INSTRUCTIONS:\n- Clarify\n- High-level design")
+
+        monkeypatch.setattr(ip, "_chat", fake_chat)
+        result = ip.design_extract([], "Design a chat system with 1M DAU")
+        assert result["question"] == "Design a chat system"
+        assert result["instructions"] == ["Clarify", "High-level design"]
+        assert result["provider"] == "groq_text"
+
+
+# ---------------------------------------------------------------------------
+# design interview mode: session state machine
+# ---------------------------------------------------------------------------
+
+class TestDesignSession:
+    def _activate(self, session):
+        session.design.update({
+            "active": True,
+            "question": "Design a URL shortener",
+            "instructions": ["Clarify requirements", "High-level design"],
+        })
+
+    def test_start_requires_live_mode(self, session):
+        res = session.start_design()
+        assert res["ok"] is False
+        assert "live" in res["error"].lower()
+
+    def test_start_without_frame_errors(self, session):
+        session.start_live()
+        session.frame_provider = None
+        session.context = {"problem": "", "code": "", "segments": []}
+        res = session.start_design()
+        assert res["ok"] is False
+        assert "region" in res["error"].lower()
+        session.stop_live()
+
+    def test_start_extracts_and_emits_state(self, session, monkeypatch):
+        import interview_session as mod
+        session.start_live()
+        _drain(session.out_queue)  # drop start_live's cleared design_state
+        session.frame_provider = lambda: (b"frame", 1, time.time())
+        monkeypatch.setattr(mod, "design_extract", lambda *a, **k: {
+            "question": "Design a URL shortener",
+            "instructions": ["Clarify requirements", "Bottlenecks"],
+            "provider": "groq_vision",
+        })
+        res = session.start_design()
+        assert res["ok"] is True
+        assert res["active"] is True
+        assert res["question"] == "Design a URL shortener"
+        assert res["instructions"] == ["Clarify requirements", "Bottlenecks"]
+        msg = _wait_for(session.out_queue, "design_state", timeout=4)
+        assert msg is not None, _drain(session.out_queue)
+        assert msg["active"] is True
+        session.stop_live()
+
+    def test_turn_merges_state_and_emits_answer(self, session, monkeypatch):
+        import interview_session as mod
+        self._activate(session)
+        monkeypatch.setattr(mod, "design_turn", lambda utterance, state, **k: {
+            "stage": "requirements",
+            "spoken": "We handle about a billion redirects a month.",
+            "mermaid": "flowchart TD\n  A[API] --> DB[(Store)]",
+            "facts": ["1B redirects/month"],
+            "decisions": ["302 redirect with cache"],
+            "next": "Sketch the high-level design.",
+            "provider": "groq",
+        })
+        outcome = session._run_design_turn("what scale?")
+        assert outcome == {"answered": True}
+        msg = _wait_for(session.out_queue, "design_answer", timeout=4)
+        assert msg is not None, _drain(session.out_queue)
+        assert msg["stage"] == "requirements"
+        assert msg["answer"]["spoken"].startswith("We handle")
+        assert msg["diagram"].startswith("flowchart TD")
+        assert msg["facts"] == ["1B redirects/month"]
+        assert "Sketch" in msg["next"]
+        # session state merged
+        assert session.design["stage"] == "requirements"
+        assert session.design["facts"] == ["1B redirects/month"]
+        assert session.design["decisions"] == ["302 redirect with cache"]
+        # history keeps cross-mode continuity
+        assert session.history and session.history[-1]["answer"].startswith("We handle")
+
+    def test_compaction_caps_turns_but_keeps_facts(self, session, monkeypatch):
+        import interview_session as mod
+        self._activate(session)
+        turn = {"n": 0}
+
+        def fake_turn(utterance, state, **k):
+            turn["n"] += 1
+            n = turn["n"]
+            return {
+                "stage": "deep_dive",
+                "spoken": f"Turn {n} answer.",
+                "mermaid": f"flowchart TD\n  N{n}[Node{n}]",
+                "facts": [f"fact-{n}"],
+                "decisions": [],
+                "next": "",
+                "provider": "groq",
+            }
+
+        monkeypatch.setattr(mod, "design_turn", fake_turn)
+        for i in range(9):
+            session._run_design_turn(f"utterance {i}")
+        assert len(session.design["turns"]) <= 6          # bounded window
+        assert len(session.design["facts"]) == 9          # state keeps everything
+        assert session.design["facts"][0] == "fact-1"
+        assert session.design["diagram"] == "flowchart TD\n  N9[Node9]"
+
+    def test_live_worker_routes_to_design_when_active(self, session, monkeypatch):
+        import interview_session as mod
+        session.start_live()
+        self._activate(session)  # AFTER start_live: it resets design state
+        seen = {}
+
+        def fake_design_turn(utterance, state, **k):
+            seen["utterance"] = utterance
+            seen["state"] = state
+            return {"stage": "clarify", "spoken": "Answer.", "mermaid": "",
+                    "facts": [], "decisions": [], "next": "",
+                    "provider": "groq"}
+
+        def detect_should_not_run(*a, **k):
+            raise AssertionError("detect_and_answer must not run in design mode")
+
+        monkeypatch.setattr(mod, "design_turn", fake_design_turn)
+        monkeypatch.setattr(mod, "detect_and_answer", detect_should_not_run)
+        session._on_live_committed({"text": "so what about the write path?"})
+        msg = _wait_for(session.out_queue, "design_answer", timeout=6)
+        assert msg is not None, _drain(session.out_queue)
+        assert seen["utterance"] == "so what about the write path?"
+        assert seen["state"]["question"] == "Design a URL shortener"
+        session.stop_live()
+
+    def test_live_worker_uses_detect_when_design_inactive(self, session, monkeypatch):
+        import interview_session as mod
+        assert session.design["active"] is False
+        monkeypatch.setattr(mod, "detect_and_answer", lambda t, **k: {
+            "is_question": True, "question": t,
+            "answer": "Normal live answer.", "provider": "groq",
+        })
+        session.start_live()
+        session._on_live_committed({"text": "Tell me about yourself"})
+        msg = _wait_for(session.out_queue, "answer", timeout=6)
+        assert msg is not None, _drain(session.out_queue)
+        assert msg["answer"] == "Normal live answer."
+        session.stop_live()
+
+    def test_design_next_throttles_auto_poll(self, session, monkeypatch):
+        import interview_session as mod
+        session.start_live()
+        self._activate(session)
+        calls = []
+        monkeypatch.setattr(mod, "design_turn", lambda u, s, **k: calls.append(u) or {
+            "stage": "clarify", "spoken": "ok", "mermaid": "",
+            "facts": [], "decisions": [], "next": "", "provider": "groq"})
+        res = session.design_next(force=False)
+        assert res["ok"] is True
+        res = session.design_next(force=False)  # inside the floor window
+        assert res["ok"] is True and res.get("skipped") is True
+        assert res["error"] == "throttled"
+        assert len(calls) == 1
+        res = session.design_next(force=True)  # manual tap always runs
+        assert res["ok"] is True
+        assert len(calls) == 2
+        session.stop_live()
+
+    def test_design_next_requires_active_session(self, session):
+        res = session.design_next()
+        assert res["ok"] is False
+        assert "active" in res["error"].lower()
+
+    def test_design_end_clears_and_emits(self, session):
+        self._activate(session)
+        res = session.design_end()
+        assert res["ok"] is True
+        assert session.design["active"] is False
+        msg = _wait_for(session.out_queue, "design_state", timeout=4)
+        assert msg is not None, _drain(session.out_queue)
+        assert msg["active"] is False
+
+    def test_stop_live_clears_design(self, session):
+        session.start_live()
+        _drain(session.out_queue)  # drop start_live's cleared design_state
+        self._activate(session)
+        session.stop_live()
+        assert session.design["active"] is False
+        msg = _wait_for(session.out_queue, "design_state", timeout=4)
+        assert msg is not None, _drain(session.out_queue)
+        assert msg["active"] is False
+
+    def test_rate_wait_callback_emits(self, session):
+        session._on_rate_wait(4, "answer")
+        msg = _wait_for(session.out_queue, "rate_wait", timeout=4)
+        assert msg is not None
+        assert msg["seconds"] == 4
+        assert msg["what"] == "answer"
+
+    def test_status_includes_design_payload(self, session):
+        status = session.status()
+        assert status["design"]["active"] is False
+        assert "stage" in status["design"]

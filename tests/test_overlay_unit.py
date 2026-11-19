@@ -14,14 +14,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 
 from overlay_window import (
+    DEFAULT_ZOOM,
     MIN_H,
     MIN_W,
     OPACITY_MAX,
     OPACITY_MIN,
     PRESETS,
+    WDA_EXCLUDEFROMCAPTURE,
     ZOOM_MAX,
     ZOOM_MIN,
     OverlayController,
+    _set_capture_exclusion,
     clamp,
     get_overlay,
 )
@@ -30,6 +33,10 @@ from overlay_window import (
 class FakePane:
     def __init__(self):
         self.calls = []
+        self.hwnd = 1234
+
+    def winId(self):
+        return self.hwnd
 
     def open_pane(self):
         self.calls.append("open")
@@ -46,8 +53,11 @@ class FakePane:
     def set_opacity(self, opacity):
         self.calls.append(("opacity", opacity))
 
-    def set_click_through(self, enabled):
-        self.calls.append(("click_through", enabled))
+    def set_interact(self, enabled):
+        self.calls.append(("interact", bool(enabled)))
+
+    def run_js(self, script):
+        self.calls.append(("js", script))
 
     def setGeometry(self, *geo):
         self.calls.append(("geometry", geo))
@@ -82,14 +92,21 @@ class TestHelpers:
             assert w >= MIN_W, name
             assert h >= MIN_H, name
 
+    def test_standard_preset_is_default_size(self):
+        from overlay_window import DEFAULT_H, DEFAULT_W
+
+        assert PRESETS["standard"] == (DEFAULT_W, DEFAULT_H)
+        assert (DEFAULT_W, DEFAULT_H) == (768, 800)  # +20% over the old 640
+
 
 class TestGeometryState:
     def test_initial_status(self, ctrl):
         st = ctrl.status()
         assert st["open"] is False
         assert st["hidden"] is False
-        assert st["click_through"] is True
-        assert st["zoom"] == 1.0
+        assert "click_through" not in st  # pane is permanently read-only
+        assert st["capture_excluded"] is False
+        assert st["zoom"] == DEFAULT_ZOOM == 0.75  # pane starts compact
         assert st["opacity"] == 1.0
         assert st["hotkey"] == "Ctrl+Shift+`"
 
@@ -107,7 +124,7 @@ class TestGeometryState:
 
     def test_step_axis(self, ctrl):
         st = ctrl.step("w", 40)
-        assert st["w"] == 640 + 40
+        assert st["w"] == 768 + 40
         st = ctrl.step("h", -40)
         assert st["h"] == 800 - 40
 
@@ -164,24 +181,61 @@ class TestPaneCommands:
     def test_open_parks_on_right_edge(self, ctrl):
         _install_fake_pane(ctrl)
         st = ctrl.open()
-        # x = screen(1920) - w(640) - 40 = 1240
-        assert st["x"] == 1920 - 640 - 40
+        # x = screen(1920) - w(768) - 40 = 1112
+        assert st["x"] == 1920 - 768 - 40
         assert st["positioned"] is True
+
+    def test_open_clamps_size_and_parks_fully_on_screen(self, ctrl):
+        _install_fake_pane(ctrl)
+        ctrl._screen_bounds = lambda: (0, 0, 1366, 768)  # user's display
+        st = ctrl.open()
+        # the 800-high default must be clamped to the screen height
+        assert (st["w"], st["h"]) == (768, 768)
+        assert st["x"] + st["w"] <= 1366
+        assert st["y"] + st["h"] <= 768
+        assert st["x"] == 1366 - 768 - 40  # right-edge park preserved
+
+    def test_open_applies_capture_exclusion(self, ctrl, monkeypatch):
+        pane = _install_fake_pane(ctrl)
+        seen = []
+        monkeypatch.setattr(
+            "overlay_window._set_capture_exclusion",
+            lambda hwnd, user32=None: seen.append(hwnd) or True,
+        )
+        st = ctrl.open()
+        assert seen == [pane.hwnd]
+        assert st["capture_excluded"] is True
+
+    def test_capture_exclusion_failure_degrades(self, ctrl, monkeypatch):
+        _install_fake_pane(ctrl)
+        monkeypatch.setattr(
+            "overlay_window._set_capture_exclusion",
+            lambda hwnd, user32=None: False,
+        )
+        st = ctrl.open()
+        assert st["open"] is True
+        assert st["capture_excluded"] is False
+
+    def test_close_resets_capture_excluded(self, ctrl, monkeypatch):
+        _install_fake_pane(ctrl)
+        monkeypatch.setattr(
+            "overlay_window._set_capture_exclusion",
+            lambda hwnd, user32=None: True,
+        )
+        ctrl.open()
+        st = ctrl.close()
+        assert st["capture_excluded"] is False
 
     def test_zoom_and_opacity_reach_pane(self, ctrl):
         pane = _install_fake_pane(ctrl)
         ctrl.open()
         ctrl.zoom_step(0.1)
         ctrl.opacity_step(-0.1)
-        assert ("zoom", 1.1) in pane.calls
+        assert ("zoom", 0.85) in pane.calls  # 0.75 default + 0.1 step
         assert ("opacity", 0.9) in pane.calls
 
-    def test_click_through_toggle_reaches_pane(self, ctrl):
-        pane = _install_fake_pane(ctrl)
-        ctrl.open()
-        st = ctrl.set_click_through(False)
-        assert st["click_through"] is False
-        assert ("click_through", False) in pane.calls
+    def test_no_click_through_mutation_exists(self, ctrl):
+        assert not hasattr(ctrl, "set_click_through")
 
     def test_hidden_toggles(self, ctrl):
         pane = _install_fake_pane(ctrl)
@@ -202,6 +256,64 @@ class TestPaneCommands:
         _install_fake_pane(ctrl)
         st = ctrl.set_hidden(True)
         assert st["open"] is False
+
+
+def _js_scripts(pane):
+    return [c[1] for c in pane.calls if isinstance(c, tuple) and c[0] == "js"]
+
+
+class TestScrollMode:
+    """Scroll mode: unlock native wheel/scrollbar input on the pane."""
+
+    def test_interact_unlock_and_relock(self, ctrl):
+        pane = _install_fake_pane(ctrl)
+        ctrl.open()
+        st = ctrl.set_interact(True)
+        assert st["interact"] is True
+        assert ("interact", True) in pane.calls
+        assert any("iv-scrollon', true" in s for s in _js_scripts(pane))
+
+        st = ctrl.set_interact(False)
+        assert st["interact"] is False
+        assert ("interact", False) in pane.calls
+        assert any("iv-scrollon', false" in s for s in _js_scripts(pane))
+
+    def test_interact_requires_open_pane(self, ctrl):
+        _install_fake_pane(ctrl)
+        with pytest.raises(RuntimeError, match="not open"):
+            ctrl.set_interact(True)
+
+    def test_hide_forces_relock(self, ctrl):
+        """Panic Hide must fail-closed back to locked (flag + state + page)."""
+        pane = _install_fake_pane(ctrl)
+        ctrl.open()
+        ctrl.set_interact(True)
+
+        st = ctrl.set_hidden(True)
+        assert st["hidden"] is True
+        assert st["interact"] is False
+        assert ("hidden", True) in pane.calls
+        assert ("interact", False) in pane.calls
+        assert any("iv-scrollon', false" in s for s in _js_scripts(pane))
+
+    def test_close_resets_interact(self, ctrl):
+        pane = _install_fake_pane(ctrl)
+        ctrl.open()
+        ctrl.set_interact(True)
+
+        st = ctrl.close()
+        assert st["open"] is False
+        assert st["interact"] is False
+
+    def test_open_starts_locked(self, ctrl):
+        _install_fake_pane(ctrl)
+        st = ctrl.open()
+        assert st["interact"] is False
+
+    def test_status_carries_interact_field(self, ctrl):
+        st = ctrl.status()
+        assert st["interact"] is False
+        assert "click_through" not in st  # pane stays read-only by default
 
 
 class TestQueueAndNotify:
@@ -255,3 +367,30 @@ class TestSingleton:
     def test_get_overlay_is_singleton(self):
         assert get_overlay() is get_overlay()
         assert isinstance(get_overlay(), OverlayController)
+
+
+class TestCaptureExclusionHelper:
+    class _Stub:
+        def __init__(self, ok):
+            self.ok = ok
+            self.calls = []
+
+        def SetWindowDisplayAffinity(self, hwnd, affinity):
+            self.calls.append((hwnd, affinity))
+            return self.ok
+
+    def test_calls_winapi_with_wda_exclude(self):
+        stub = self._Stub(True)
+        assert _set_capture_exclusion(0x1234, user32=stub) is True
+        assert stub.calls == [(0x1234, WDA_EXCLUDEFROMCAPTURE)]
+        assert WDA_EXCLUDEFROMCAPTURE == 0x11
+
+    def test_failure_returns_false(self):
+        assert _set_capture_exclusion(1, user32=self._Stub(False)) is False
+
+    def test_exception_returns_false(self):
+        class _Boom:
+            def SetWindowDisplayAffinity(self, hwnd, affinity):
+                raise OSError("boom")
+
+        assert _set_capture_exclusion(1, user32=_Boom()) is False

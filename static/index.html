@@ -568,6 +568,21 @@ body {
   flex-shrink: 0;
 }
 .status-dot.pulse { background: #f59e0b; animation: ivPulse 1s infinite; }
+.iv-audio-chip {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #161616;
+  border: 1px solid #262626;
+  color: #888;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.iv-audio-chip.starting { color: #93c5fd; border-color: #1e3a5f; }
+.iv-audio-chip.ok { color: #4ade80; border-color: #14532d; }
+.iv-audio-chip.warn { color: #f59e0b; border-color: #78350f; }
+.iv-audio-chip.bad { color: #ef4444; border-color: #7f1d1d; }
 @keyframes ivPulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
@@ -708,21 +723,27 @@ body {
   padding: 10px 12px;
   background: #111;
   border-top: 1px solid #222;
-  display: flex;
+  display: grid;
   gap: 8px;
   flex-shrink: 0;
 }
 .iv-btn {
-  flex: 1;
+  width: 100%;
+  min-width: 0;
   padding: 14px 10px;
   font-size: 14px;
   border-radius: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .iv-start { background: #16a34a; color: #fff; }
 .iv-stop { background: #7f1d1d; color: #fecaca; }
 .iv-skip { background: #222; color: #aaa; }
 .iv-screen { background: #1f2937; color: #93c5fd; font-size: 13px; padding: 10px; }
-#screenControls { flex-wrap: wrap; }
+#screenControls { grid-template-columns: repeat(3, 1fr); }
+#liveControls { grid-template-columns: repeat(2, 1fr); }
+#mockControls { grid-template-columns: 1fr; }
 .iv-provider { background: #3b0764; color: #c4b5fd; font-size: 13px; padding: 10px; font-weight: 600; }
 .iv-provider[data-active="gemini"] { background: #1e3a5f; color: #7dd3fc; }
 .iv-capture { background: #1f2937; color: #86efac; font-size: 13px; padding: 10px; }
@@ -761,8 +782,7 @@ body {
   width: 100%;
   margin-bottom: 8px;
 }
-#mockControls { flex-direction: column; }
-.mock-actions { display: flex; gap: 8px; }
+.mock-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .mock-select, .mock-input {
   flex: 1;
   min-width: 0;
@@ -774,6 +794,90 @@ body {
   font-size: 12px;
 }
 .mock-input::placeholder { color: #555; }
+
+/* ---- design interview mode ------------------------------------------ */
+.iv-design { background: #4c1d95; color: #ddd6fe; font-size: 13px; padding: 10px; }
+.iv-design.on { background: #16a34a; color: #fff; }
+.iv-rate-chip {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #1c1508;
+  border: 1px solid #78350f;
+  color: #f59e0b;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+.iv-design-bar {
+  padding: 8px 12px;
+  background: #0d0d0d;
+  border-top: 1px solid #222;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.iv-design-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+}
+.iv-design-steps .iv-step {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #161616;
+  border: 1px solid #262626;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.iv-design-steps .iv-step.done { color: #4ade80; border-color: #14532d; }
+.iv-design-steps .iv-step.active {
+  background: #4c1d95;
+  border-color: #6d28d9;
+  color: #e9d5ff;
+}
+.iv-design-steps i { color: #444; font-style: normal; font-size: 9px; }
+.iv-design-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.iv-design-q {
+  font-size: 11px;
+  color: #a78bfa;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.iv-design-next { font-size: 11px; color: #93c5fd; font-style: italic; }
+.iv-design-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.iv-design-act { padding: 10px; font-size: 13px; background: #1f2937; color: #c4b5fd; }
+.iv-design-end { background: #7f1d1d; color: #fecaca; }
+.iv-diagram {
+  background: #0b0b0b;
+  border: 1px solid #262626;
+  border-radius: 8px;
+  padding: 8px;
+  overflow-x: auto;
+  text-align: center;
+  margin-top: 6px;
+}
+.iv-diagram svg { max-width: 100%; height: auto; }
+.iv-diagram.src {
+  font-family: Consolas, Menlo, monospace;
+  font-size: 11px;
+  color: #a7f3d0;
+  white-space: pre;
+  text-align: left;
+}
+.iv-next-hint {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed #333;
+  font-size: 12px;
+  color: #93c5fd;
+}
+.iv-copy + .iv-copy { margin-left: 4px; }
 
 .iv-screen-preview {
   position: fixed;
@@ -894,7 +998,7 @@ body {
   gap: 8px;
   padding: 12px;
 }
-.mirror-presets button, .mirror-toggles button {
+.mirror-presets button {
   flex: 1;
   padding: 10px 6px;
   font-size: 12px;
@@ -904,11 +1008,13 @@ body {
   color: #9ca3af;
   cursor: pointer;
 }
-.mirror-presets button:active, .mirror-toggles button:active { background: #222; color: #4ade80; }
-.mirror-toggles { display: flex; gap: 8px; padding: 0 12px 14px; }
-.mirror-toggles button.ct-on { color: #4ade80; border-color: #14532d; }
+.mirror-presets button:active { background: #222; color: #4ade80; }
 
 /* ---- desktop overlay display variant (?display=overlay) ----------- */
+/* Read-only pane: defense-in-depth under WindowTransparentForInput —
+   no event on this page ever reaches a control. */
+body.display-overlay,
+body.display-overlay * { pointer-events: none; user-select: none; }
 body.display-overlay { font-size: 17px; }
 body.display-overlay .answer-panel,
 body.display-overlay .interview-panel,
@@ -916,9 +1022,71 @@ body.display-overlay .mirror-panel { max-width: none; }
 body.display-overlay .iv-msg { max-width: 80%; }
 body.display-overlay .iv-bubble { font-size: 16px; }
 body.display-overlay .header h1 { font-size: 20px; }
+
+/* Scroll mode (unlocked): only the two scroll surfaces take pointer input —
+   everything else in the pane stays dead. Children stay none so inner
+   buttons (Copy etc.) can't be pressed from the pane; the scrollbar itself
+   belongs to the container, so wheel + thumb-drag work. */
+body.display-overlay.iv-scrollon .answer-panel,
+body.display-overlay.iv-scrollon .interview-history { pointer-events: auto; }
+body.display-overlay.iv-scrollon .answer-panel *,
+body.display-overlay.iv-scrollon .interview-history * { pointer-events: none; }
+
+/* Always-visible pane scrollbars (custom ::-webkit-scrollbar forces classic
+   non-auto-hide rendering in Chromium/QtWebEngine). Pane-scoped: the phone
+   keeps its native overlay scrollbars. */
+body.display-overlay .answer-panel::-webkit-scrollbar,
+body.display-overlay .interview-history::-webkit-scrollbar { width: 10px; height: 10px; }
+body.display-overlay .answer-panel::-webkit-scrollbar-track,
+body.display-overlay .interview-history::-webkit-scrollbar-track { background: #151515; }
+body.display-overlay .answer-panel::-webkit-scrollbar-thumb,
+body.display-overlay .interview-history::-webkit-scrollbar-thumb {
+  background: #3f3f3f; border-radius: 5px; border: 2px solid #151515;
+}
+body.display-overlay .answer-panel::-webkit-scrollbar-thumb:hover,
+body.display-overlay .interview-history::-webkit-scrollbar-thumb:hover { background: #4ade80; }
+body.display-overlay .answer-panel::-webkit-scrollbar-corner { background: transparent; }
+
+/* Scroll-mode badge (visible only in the pane while unlocked). */
+#ivScrollOnBadge {
+  display: none;
+  position: fixed;
+  top: 6px;
+  right: 10px;
+  z-index: 90;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: #78350f;
+  border: 1px solid #b45309;
+  color: #fbbf24;
+  pointer-events: none;
+}
+body.display-overlay.iv-scrollon #ivScrollOnBadge { display: block; }
+
+/* Mirror tab — Scroll mode toggle */
+.mirror-lock {
+  width: 100%;
+  padding: 9px 0;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #161616;
+  color: #888;
+  cursor: pointer;
+}
+.mirror-lock.unlocked {
+  background: #14532d;
+  border-color: #16a34a;
+  color: #4ade80;
+}
 </style>
 </head>
 <body>
+<div id="ivScrollOnBadge">SCROLL ON</div>
 
 <div class="header">
   <h1>Quizbox AI</h1>
@@ -966,6 +1134,8 @@ body.display-overlay .header h1 { font-size: 20px; }
   <div class="interview-status" id="interviewStatus">
     <span class="status-dot off" id="ivStatusDot"></span>
     <span id="ivStatusText">Select Live or Mock and press Start</span>
+    <span class="iv-audio-chip" id="ivAudioChip" style="display:none;">Audio: &ndash;</span>
+    <span class="iv-rate-chip" id="ivRateChip" style="display:none;">Rate limit&hellip;</span>
   </div>
 
   <div class="interview-history" id="interviewHistory">
@@ -1000,6 +1170,19 @@ body.display-overlay .header h1 { font-size: 20px; }
     </div>
   </div>
 
+  <div class="iv-design-bar" id="ivDesignBar" style="display:none;">
+    <div class="iv-design-steps" id="ivDesignSteps"></div>
+    <div class="iv-design-meta">
+      <span class="iv-design-q" id="ivDesignQ" title=""></span>
+      <span class="iv-design-next" id="ivDesignNext"></span>
+    </div>
+    <div class="iv-design-actions">
+      <button class="btn iv-btn iv-design-act" id="ivDesignNextBtn">Next &#9656;</button>
+      <button class="btn iv-btn iv-design-act" id="ivDesignCopyBtn">&#128203; Copy image</button>
+      <button class="btn iv-btn iv-design-act iv-design-end" id="ivDesignEndBtn">End</button>
+    </div>
+  </div>
+
   <div class="interview-controls" id="screenControls">
     <button class="btn iv-btn iv-provider" id="ivProviderBtn" data-active="groq" title="Switch the model answering questions">Groq</button>
     <button class="btn iv-btn iv-screen" id="ivSelectRegionBtn">Select Region</button>
@@ -1010,6 +1193,7 @@ body.display-overlay .header h1 { font-size: 20px; }
     <button class="btn iv-btn iv-capture" id="ivProblemBtn" title="Copy the problem with your keyboard, then tap">Problem</button>
     <button class="btn iv-btn iv-capture" id="ivCodeBtn" title="Copy the starter code with your keyboard, then tap">Code</button>
     <button class="btn iv-btn iv-capture" id="ivSegmentBtn" title="Scroll the problem, then tap to stack a screenshot">+ Segment</button>
+    <button class="btn iv-btn iv-design" id="ivDesignBtn" title="Start a system-design session from the question panel">Design</button>
   </div>
   <div class="iv-context-bar" id="ivContextBar" style="display:none;">
     <span class="iv-chip" id="ivChipProblem" style="display:none;">Problem <b id="ivChipProblemLen">0</b> <i title="Clear">&times;</i></span>
@@ -1054,7 +1238,7 @@ body.display-overlay .header h1 { font-size: 20px; }
       <label>Zoom</label>
       <div class="stepper">
         <button id="mirrorZoomMinus">&minus;</button>
-        <span id="mirrorZoomVal">1.0&times;</span>
+        <span id="mirrorZoomVal">0.75&times;</span>
         <button id="mirrorZoomPlus">+</button>
       </div>
     </div>
@@ -1066,15 +1250,16 @@ body.display-overlay .header h1 { font-size: 20px; }
         <button id="mirrorOpPlus">+</button>
       </div>
     </div>
+    <div class="mirror-cell">
+      <label>Scroll mode</label>
+      <button id="mirrorScrollMode" class="mirror-lock" style="display:none;">&#128274; Locked</button>
+    </div>
   </div>
   <div class="mirror-presets">
     <button class="mirror-preset" data-preset="tiny">Tiny</button>
     <button class="mirror-preset" data-preset="compact">Compact</button>
     <button class="mirror-preset" data-preset="standard">Standard</button>
     <button id="mirrorCenterBtn">Center</button>
-  </div>
-  <div class="mirror-toggles">
-    <button id="mirrorClickBtn" class="ct-on">Click-through: On</button>
   </div>
 </div>
 
@@ -1150,6 +1335,7 @@ body.display-overlay .header h1 { font-size: 20px; }
 <div class="toast" id="toast"></div>
 
 <script src="/static/qr.js"></script>
+<script src="/static/vendor/mermaid.min.js"></script>
 <script>
 const streamPreview = document.getElementById('streamPreview');
 const selectRegionBtn = document.getElementById('selectRegionBtn');
@@ -1196,10 +1382,26 @@ let cooldownDuration = parseInt(localStorage.getItem('quizbox_cooldown') || '20'
 let cooldownRemaining = 0;
 let cooldownInterval = null;
 
-function showToast(msg, duration = 2500) {
+const ivRelayedToasts = new Set();
+
+function showToastLocal(msg, duration = 2500) {
   toast.textContent = msg;
   toast.classList.add('show');
   setTimeout(() => toast.classList.remove('show'), duration);
+}
+
+// Show locally, then mirror to every other client.  The nonce lets the
+// sender ignore its own echo; handlers that fire on every client call
+// showToastLocal directly so broadcasts never re-relay.
+function showToast(msg, duration = 2500) {
+  showToastLocal(msg, duration);
+  if (!ivWs || ivWs.readyState !== WebSocket.OPEN) return;
+  const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  ivRelayedToasts.add(nonce);
+  setTimeout(() => ivRelayedToasts.delete(nonce), 10000);
+  try {
+    ivWs.send(JSON.stringify({ action: 'relay_toast', text: msg, nonce }));
+  } catch (e) {}
 }
 
 function startCooldown(seconds) {
@@ -1322,6 +1524,7 @@ async function checkScreenStatus() {
 }
 
 function activateStream() {
+  if (streamActive) return; // frame loop already running; region changes are picked up live
   const generation = ++streamGeneration;
   streamActive = true;
   streamPreview.style.display = 'block';
@@ -1330,6 +1533,23 @@ function activateStream() {
   statusText.textContent = 'Screen capture active';
   updateCaptureButtons();
   pullLatestFrames(generation);
+}
+
+function stopStreamDisplay() {
+  if (!streamActive) return;
+  streamActive = false;
+  streamGeneration++; // ends the pullLatestFrames loop
+  streamPreview.style.display = 'none';
+  noStream.style.display = '';
+  ivScreenPreview.style.display = 'none';
+  statusDot.className = 'status-dot off';
+  statusText.textContent = 'Ready';
+  updateCaptureButtons();
+}
+
+function applyStreamState(st) {
+  if (st && st.running && st.region) activateStream();
+  else stopStreamDisplay();
 }
 
 function updateCaptureButtons() {
@@ -1417,6 +1637,17 @@ captureQuickBtn.addEventListener('click', () => handleCapture('quick'));
 captureVerifiedBtn.addEventListener('click', () => handleCapture('verified'));
 captureBtn.addEventListener('click', () => handleCapture('quick'));
 
+// Rendered by every client from the quiz_result broadcast so phone and
+// pane always show the same answer, count, and cooldown.
+function applyQuizResult(result) {
+  showAnswer(result);
+  if (appMode !== 'interview') {
+    answerCount++;
+    countText.textContent = `${answerCount} answered`;
+  }
+  startCooldown(cooldownDuration);
+}
+
 async function handleCapture(strategy) {
   if (isProcessing) return;
 
@@ -1446,16 +1677,15 @@ async function handleCapture(strategy) {
 
   try {
     const result = await sendCapture(base64Image, strategy);
-    showAnswer(result);
-    answerCount++;
-    countText.textContent = `${answerCount} answered`;
-    startCooldown(cooldownDuration);
-
-    if (result.detected) {
-      showToast('Question answered!');
-    } else {
-      showToast('No question found - try again');
+    if (!ivWs || ivWs.readyState !== WebSocket.OPEN) {
+      // Offline fallback: with the socket up the quiz_result broadcast
+      // renders the answer, count, and cooldown on every client (incl. us).
+      showAnswer(result);
+      answerCount++;
+      countText.textContent = `${answerCount} answered`;
+      startCooldown(cooldownDuration);
     }
+    showToast(result.detected ? 'Question answered!' : 'No question found - try again');
   } catch (e) {
     const msg = e.message || '';
     if (msg.includes('rate-limit') || msg.includes('Rate limit') || msg.includes('429') || msg.includes('All providers')) {
@@ -1586,6 +1816,8 @@ function showAnswer(result) {
     ${fallbackHtml}
     ${sourcesHtml}
   `;
+  answerPanel.scrollTop = 0;   // new solution starts at the top
+  ivSyncScroll('answer', 0);
 
   if (result.provider) {
     providerText.textContent = result.provider;
@@ -1716,6 +1948,7 @@ const interviewPanel = document.getElementById('interviewPanel');
 const interviewConn = document.getElementById('interviewConn');
 const ivStatusDot = document.getElementById('ivStatusDot');
 const ivStatusText = document.getElementById('ivStatusText');
+const ivAudioChip = document.getElementById('ivAudioChip');
 const interviewHistory = document.getElementById('interviewHistory');
 const ivEmpty = document.getElementById('ivEmpty');
 const interviewCaption = document.getElementById('interviewCaption');
@@ -1749,6 +1982,15 @@ const ivChipCode = document.getElementById('ivChipCode');
 const ivChipCodeLen = document.getElementById('ivChipCodeLen');
 const ivChipSeg = document.getElementById('ivChipSeg');
 const ivChipSegLen = document.getElementById('ivChipSegLen');
+const ivDesignBtn = document.getElementById('ivDesignBtn');
+const ivDesignBar = document.getElementById('ivDesignBar');
+const ivDesignSteps = document.getElementById('ivDesignSteps');
+const ivDesignQ = document.getElementById('ivDesignQ');
+const ivDesignNext = document.getElementById('ivDesignNext');
+const ivDesignNextBtn = document.getElementById('ivDesignNextBtn');
+const ivDesignCopyBtn = document.getElementById('ivDesignCopyBtn');
+const ivDesignEndBtn = document.getElementById('ivDesignEndBtn');
+const ivRateChip = document.getElementById('ivRateChip');
 
 let ivWs = null;
 let ivWsReady = false;
@@ -1761,6 +2003,17 @@ let ivAutoAssist = true;
 let phoneMic = null;
 let ivCtx = { problem: 0, code: 0, segments: 0 }; // stashed context lengths
 let ivCtxPreview = { problem: '', code: '' };
+// Caption strip: 'hidden' | 'live' (transient partial) | 'idle' (listening
+// placeholder — keeps the strip visible for the whole session).
+let ivCaptionMode = 'hidden';
+let ivAudioMsg = { level: 'starting', message: 'Listening for the interviewer…' };
+// Design interview mode (server-driven; design_state/design_answer sync it)
+let ivDesign = {
+  active: false, stage: 'clarify', question: '', instructions: [],
+  facts: [], decisions: [], diagram: '', next: '',
+};
+let ivRateTimer = null;
+let ivMermaidReady = false;
 
 // ---- desktop overlay (Mirror tab) ---------------------------------
 const isOverlayDisplay =
@@ -1778,11 +2031,11 @@ const mirrorWVal = document.getElementById('mirrorWVal');
 const mirrorHVal = document.getElementById('mirrorHVal');
 const mirrorZoomVal = document.getElementById('mirrorZoomVal');
 const mirrorOpVal = document.getElementById('mirrorOpVal');
-const mirrorClickBtn = document.getElementById('mirrorClickBtn');
+const mirrorScrollModeBtn = document.getElementById('mirrorScrollMode');
 
 let overlayState = {
-  open: false, hidden: false, x: 0, y: 0, w: 640, h: 800,
-  opacity: 1.0, zoom: 1.0, click_through: true,
+  open: false, hidden: false, x: 0, y: 0, w: 768, h: 800,
+  opacity: 1.0, zoom: 1.0, interact: false,
 };
 
 function renderOverlayState(st) {
@@ -1796,15 +2049,20 @@ function renderOverlayState(st) {
     ? 'Pane closed'
     : (s.hidden ? 'Pane hidden' : `Pane open — ${s.w}\u00d7${s.h} @ (${s.x},${s.y})`) +
       ` \u00b7 ${Math.round(s.opacity * 100)}%` +
-      (s.click_through ? ' \u00b7 click-through' : ' \u00b7 interactive');
+      (s.interact ? ' \u00b7 scroll unlocked' : ' \u00b7 read-only');
   mirrorStatus.className = 'mirror-status' + (s.open && !s.hidden ? ' on' : '');
   mirrorWVal.textContent = s.w;
   mirrorHVal.textContent = s.h;
-  mirrorZoomVal.textContent = s.zoom.toFixed(1) + '\u00d7';
+  mirrorZoomVal.textContent = parseFloat(s.zoom.toFixed(2)) + '\u00d7';
   mirrorOpVal.textContent = Math.round(s.opacity * 100) + '%';
   mirrorPos.textContent = `(${s.x}, ${s.y})`;
-  mirrorClickBtn.textContent = 'Click-through: ' + (s.click_through ? 'On' : 'Off');
-  mirrorClickBtn.classList.toggle('ct-on', s.click_through);
+  // Scroll mode: toggle label + pane badge/pointer class (idempotent with
+  // the server's immediate run_js — both paths set the same truth).
+  const unlocked = !!s.interact;
+  mirrorScrollModeBtn.style.display = s.open && !s.hidden ? '' : 'none';
+  mirrorScrollModeBtn.textContent = unlocked ? '\ud83d\udd13 Unlocked' : '\ud83d\udd12 Locked';
+  mirrorScrollModeBtn.classList.toggle('unlocked', unlocked);
+  document.body.classList.toggle('iv-scrollon', unlocked);
 }
 
 function sendTabSync(tab) {
@@ -1915,6 +2173,8 @@ function ivHandleMessage(msg) {
     case 'status':
       ivSetStatus(msg);
       if (msg.overlay) renderOverlayState(msg.overlay);
+      if (msg.stream) applyStreamState(msg.stream);
+      if (msg.design) renderDesignState(msg.design);
       // The pane boots onto the phone's last tab; the phone itself ignores
       // this (it restores its own persisted tab below).
       if (msg.tab && isOverlayDisplay) applyTabLocally(msg.tab);
@@ -1925,24 +2185,57 @@ function ivHandleMessage(msg) {
     case 'tab_changed':
       applyTabLocally(msg.tab);
       break;
+    case 'stream_state':
+      applyStreamState(msg);
+      break;
+    case 'quiz_result':
+      applyQuizResult(msg.result);
+      break;
+    case 'toast':
+      if (!msg.nonce || !ivRelayedToasts.has(msg.nonce)) showToastLocal(msg.text);
+      break;
+    case 'subtab_changed':
+      applySubTab(msg.sub, false);
+      break;
+    case 'scroll_sync': {
+      const el = msg.target === 'answer'
+        ? document.getElementById('answerPanel')
+        : document.getElementById('interviewHistory');
+      if (!el) break;
+      ivSyncApplying = true;
+      el.scrollTop = Math.max(0, msg.top | 0);
+      requestAnimationFrame(() => { ivSyncApplying = false; });
+      break;
+    }
+    case 'auto_assist':
+      setAutoAssist(msg.enabled);
+      break;
+    case 'session_state':
+      applySessionState(msg);
+      break;
     case 'transcript':
       if (msg.final) {
         ivAddEntry('interviewer', msg.text);
-        ivHideCaption();
+        ivCaptionIdle();
       } else {
         ivShowCaption('🎙 ' + msg.text);
       }
       break;
     case 'answer':
       ivAddEntry('candidate', msg.answer);
-      ivHideCaption();
+      ivCaptionIdle();
       break;
     case 'mock_partial':
       if (!msg.final) ivShowCaption('🎤 ' + msg.text);
       break;
     case 'mock_user_answer':
       ivAddEntry('candidate', msg.text);
-      ivHideCaption();
+      ivCaptionIdle();
+      break;
+    case 'audio_health':
+      ivAudioMsg = { level: msg.level, message: msg.message };
+      ivSetAudioChip(msg);
+      if (ivCaptionMode === 'idle') ivCaptionPlaceholder();
       break;
     case 'mock_question':
       ivAddEntry('interviewer', `Q${msg.question_number}. ${msg.question}`);
@@ -1953,10 +2246,22 @@ function ivHandleMessage(msg) {
     case 'screen_solve':
       ivAddScreenSolve(msg);
       break;
+    case 'design_state':
+      renderDesignState(msg);
+      break;
+    case 'design_answer':
+      ivAddDesignAnswer(msg);
+      renderDesignState(msg);
+      ivCaptionIdle();
+      break;
+    case 'rate_wait':
+      ivRateWait(msg.seconds);
+      break;
     case 'provider_changed':
       ivSetProviderLabel(msg.active);
       if (msg.reason === 'fallback') {
-        showToast('Model unavailable — switched to ' + ivProviderLabel(msg.active));
+        // Fires on every client — render locally so it is never re-relayed.
+        showToastLocal('Model unavailable — switched to ' + ivProviderLabel(msg.active));
       }
       break;
     case 'context_update':
@@ -1965,7 +2270,7 @@ function ivHandleMessage(msg) {
     case 'history':
       break;
     case 'error':
-      showToast(msg.message || 'Interview error');
+      showToastLocal(msg.message || 'Interview error');
       break;
     case 'action_result':
       ivHandleActionResult(msg);
@@ -2031,6 +2336,12 @@ function ivHandleActionResult(msg) {
   } else if (msg.action === 'set_provider') {
     ivSetProviderLabel(msg.active);
     showToast('Model: ' + ivProviderLabel(msg.active));
+  } else if (msg.action === 'design_start') {
+    showToast('Design session started — following the question\'s ladder');
+  } else if (msg.action === 'design_next') {
+    if (msg.error !== 'throttled') showToast('Re-reading the interview panel…');
+  } else if (msg.action === 'design_end') {
+    showToast('Design session ended');
   } else if (msg.action === 'provider_status') {
     ivSetProviderLabel(msg.active);
   } else if (msg.action === 'context_status') {
@@ -2065,6 +2376,42 @@ function ivSetButtons(session) {
   mockLevelSelect.disabled = mock;
 }
 
+function setAutoAssist(enabled) {
+  ivAutoAssist = !!enabled;
+  ivAutoAssistBtn.textContent = 'Auto: ' + (ivAutoAssist ? 'On' : 'Off');
+  ivAutoAssistBtn.classList.toggle('off', !ivAutoAssist);
+}
+
+// Broadcast on every start/stop so the pane shows the same buttons and
+// status as the phone (the action_result itself only reaches the sender).
+function applySessionState(msg) {
+  const st = (msg.state === 'live' || msg.state === 'mock') ? msg.state : null;
+  if (msg.fresh) ivClearHistory();
+  ivSession = st;
+  if (st && ivSubTab !== st) applySubTab(st, false);
+  ivSetButtons(st);
+  // Audio chip + listening placeholder: live sessions always show capture
+  // health; stopping tears the caption strip down completely.
+  if (st === 'live') {
+    ivAudioMsg = { level: 'starting', message: 'Listening for PC audio…' };
+    ivSetAudioChip({ level: 'starting', short: 'starting' });
+  } else {
+    ivAudioChip.style.display = 'none';
+  }
+  ivCaptionIdle();
+  const label = !st
+    ? IV_STATE_LABELS.idle
+    : (st === 'live'
+        ? 'Live interview running'
+        : ((msg.mock_state && IV_STATE_LABELS[msg.mock_state]) || 'Mock interview running'));
+  ivSetStatus({
+    state: msg.state || 'idle',
+    message: label,
+    mock_state: msg.mock_state,
+    provider: msg.provider,
+  });
+}
+
 // ---- history rendering ----------------------------------------------
 
 function ivClearHistory() {
@@ -2072,16 +2419,51 @@ function ivClearHistory() {
   interviewHistory.appendChild(ivEmpty);
   ivEmpty.style.display = '';
   interviewCaption.style.display = 'none';
+  ivCaptionMode = 'hidden';
 }
 
 function ivShowCaption(text) {
+  ivCaptionMode = 'live';
   interviewCaption.style.display = 'block';
   interviewCaption.textContent = text;
 }
 
 function ivHideCaption() {
+  ivCaptionMode = 'hidden';
   interviewCaption.style.display = 'none';
   interviewCaption.textContent = '';
+}
+
+// Between utterances the caption strip stays up as a listening placeholder
+// (fed by audio_health), so there is always visible proof of what the app
+// hears — it only fully hides when the session stops.
+function ivCaptionPlaceholder() {
+  ivCaptionMode = 'idle';
+  const prefix = ivSession === 'mock' ? '🎤 ' : '🎙 ';
+  const text = ivSession === 'mock'
+    ? 'Listening…'
+    : (ivAudioMsg.message || 'Listening…');
+  interviewCaption.style.display = 'block';
+  interviewCaption.textContent = prefix + text;
+}
+
+function ivCaptionIdle() {
+  if (ivSession) ivCaptionPlaceholder();
+  else ivHideCaption();
+}
+
+function ivSetAudioChip(msg) {
+  if (ivSession !== 'live') {
+    ivAudioChip.style.display = 'none';
+    return;
+  }
+  const lvl = msg.level || 'starting';
+  ivAudioChip.style.display = '';
+  ivAudioChip.textContent = 'Audio: ' + (msg.short || lvl);
+  ivAudioChip.className = 'iv-audio-chip ' + (
+    lvl === 'ok' ? 'ok' :
+    lvl === 'dead' ? 'bad' :
+    lvl === 'starting' ? 'starting' : 'warn');
 }
 
 const IV_ROLE_LABELS = { interviewer: 'Interviewer', candidate: 'You' };
@@ -2094,6 +2476,7 @@ function ivAddEntry(role, text) {
     `<div class="iv-bubble">${escapeHtml(text)}</div>`;
   interviewHistory.appendChild(div);
   interviewHistory.scrollTop = interviewHistory.scrollHeight;
+  ivSyncScroll('history', interviewHistory.scrollTop);
 }
 
 function ivAddFeedback(msg) {
@@ -2111,6 +2494,7 @@ function ivAddFeedback(msg) {
     `${escapeHtml(msg.feedback || '')}${improved}</div>`;
   interviewHistory.appendChild(div);
   interviewHistory.scrollTop = interviewHistory.scrollHeight;
+  ivSyncScroll('history', interviewHistory.scrollTop);
 }
 
 function ivAddScreenResult(result) {
@@ -2164,6 +2548,206 @@ function ivAddScreenSolve(msg) {
   }
   interviewHistory.appendChild(div);
   interviewHistory.scrollTop = interviewHistory.scrollHeight;
+  ivSyncScroll('history', interviewHistory.scrollTop);
+}
+
+// ---- provider switch + context stash chips ---------------------------
+
+// ---- design interview mode rendering ---------------------------------
+
+const IV_DESIGN_STAGE_ORDER = ['clarify', 'requirements', 'high_level', 'deep_dive', 'bottlenecks', 'summary'];
+const IV_DESIGN_STAGE_LABELS = {
+  clarify: 'Clarify', requirements: 'Needs', high_level: 'Design',
+  deep_dive: 'Deep dive', bottlenecks: 'Bottlenecks', summary: 'Done',
+};
+
+function renderDesignSteps(stage) {
+  const idx = IV_DESIGN_STAGE_ORDER.indexOf(stage || 'clarify');
+  ivDesignSteps.innerHTML = IV_DESIGN_STAGE_ORDER.map((s, i) => {
+    const cls = 'iv-step' + (i < idx ? ' done' : '') + (i === idx ? ' active' : '');
+    return `<span class="${cls}">${IV_DESIGN_STAGE_LABELS[s]}</span>`;
+  }).join('<i>&rarr;</i>');
+}
+
+function renderDesignState(d) {
+  ivDesign = Object.assign({}, ivDesign, d || {});
+  const active = !!ivDesign.active;
+  ivDesignBar.style.display = active ? '' : 'none';
+  ivDesignBtn.textContent = active ? 'Next ▸' : 'Design';
+  ivDesignBtn.classList.toggle('on', active);
+  if (!active) return;
+  ivDesignQ.textContent = ivDesign.question || '(design question)';
+  ivDesignQ.title = ivDesign.question || '';
+  ivDesignNext.textContent = ivDesign.next ? ('Next: ' + ivDesign.next) : '';
+  ivDesignCopyBtn.style.display = ivDesign.diagram ? '' : 'none';
+  renderDesignSteps(ivDesign.stage);
+}
+
+function ivRateWait(seconds) {
+  clearTimeout(ivRateTimer);
+  if (!seconds || seconds <= 0) {
+    ivRateChip.style.display = 'none';
+    return;
+  }
+  ivRateChip.style.display = '';
+  ivRateChip.textContent = 'Rate limit — retry in ' + seconds + 's';
+  // Belt & suspenders: the server clears it on recovery; if a message is
+  // ever lost the chip still disappears on its own.
+  ivRateTimer = setTimeout(() => { ivRateChip.style.display = 'none'; },
+    Math.max(seconds, 5) * 1000 + 15000);
+}
+
+function ivEnsureMermaid() {
+  if (ivMermaidReady) return true;
+  if (!window.mermaid) return false;
+  try {
+    // htmlLabels:false keeps the SVG free of foreignObject so it can be
+    // rasterized to PNG for the whiteboard clipboard.
+    window.mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'loose',
+      theme: 'dark',
+      flowchart: { htmlLabels: false },
+    });
+    ivMermaidReady = true;
+  } catch (e) {
+    console.error('mermaid init failed', e);
+    return false;
+  }
+  return true;
+}
+
+async function ivRenderMermaid(el, src) {
+  if (!ivEnsureMermaid()) {
+    el.textContent = src;
+    el.classList.add('src');
+    return null;
+  }
+  try {
+    const id = 'ivd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const { svg } = await window.mermaid.render(id, src);
+    el.innerHTML = svg;
+    const svgEl = el.querySelector('svg');
+    if (svgEl) {
+      svgEl.style.maxWidth = '100%';
+      svgEl.style.height = 'auto';
+    }
+    return svgEl;
+  } catch (e) {
+    console.error('mermaid render failed', e);
+    el.textContent = src;
+    el.classList.add('src');
+    return null;
+  }
+}
+
+async function ivCopyDiagramPng(container, btn, fallbackSrc) {
+  const svgEl = container.querySelector('svg');
+  const label = btn.textContent;
+  const confirm = (text) => {
+    btn.textContent = text;
+    setTimeout(() => { btn.textContent = label; }, 1400);
+  };
+  if (!svgEl) {
+    // No rendered diagram (mermaid failed to load) -> copy the source.
+    try {
+      await navigator.clipboard.writeText(fallbackSrc || '');
+      confirm('Copied code');
+    } catch (e) { showToast('Copy failed'); }
+    return;
+  }
+  try {
+    const clone = svgEl.cloneNode(true);
+    if (!clone.getAttribute('xmlns')) {
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    }
+    let w = svgEl.viewBox && svgEl.viewBox.baseVal ? svgEl.viewBox.baseVal.width : 0;
+    let h = svgEl.viewBox && svgEl.viewBox.baseVal ? svgEl.viewBox.baseVal.height : 0;
+    if (!w || !h) {
+      const r = svgEl.getBoundingClientRect();
+      w = r.width; h = r.height;
+    }
+    w = Math.ceil(w) || 800;
+    h = Math.ceil(h) || 600;
+    clone.setAttribute('width', w);
+    clone.setAttribute('height', h);
+    const xml = new XMLSerializer().serializeToString(clone);
+    const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+    const img = new Image();
+    await new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = rej;
+      img.src = url;
+    });
+    const scale = 2;
+    const pad = 10;
+    const canvas = document.createElement('canvas');
+    canvas.width = w * scale + pad * 2;
+    canvas.height = h * scale + pad * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#0b0b0b';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, pad, pad, w * scale, h * scale);
+    const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+    if (!blob) throw new Error('canvas.toBlob returned null');
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    confirm('Copied!');
+  } catch (e) {
+    console.error('diagram image copy failed', e);
+    try {
+      await navigator.clipboard.writeText(fallbackSrc || '');
+      confirm('Copied code');
+    } catch (e2) { showToast('Copy failed'); }
+  }
+}
+
+function ivAddDesignAnswer(msg) {
+  ivEmpty.style.display = 'none';
+  const spoken = (msg.answer && msg.answer.spoken) || '';
+  const stageKey = IV_DESIGN_STAGE_ORDER.indexOf(msg.stage) >= 0 ? msg.stage : 'clarify';
+  const div = document.createElement('div');
+  div.className = 'iv-msg candidate design';
+
+  let html =
+    `<div class="iv-role">Design — ${IV_DESIGN_STAGE_LABELS[stageKey]}</div>` +
+    `<div class="iv-bubble">${escapeHtml(spoken)}`;
+  if (msg.diagram) {
+    html +=
+      '<div class="iv-code-wrap">' +
+      '<div class="iv-code-head"><span>Architecture diagram</span>' +
+      '<span><button class="iv-copy iv-copy-img">&#128203; Copy image</button>' +
+      '<button class="iv-copy iv-copy-code">Code</button></span></div>' +
+      '<div class="iv-diagram"></div>' +
+      '</div>';
+  }
+  if (msg.next) {
+    html += `<div class="iv-next-hint">Next: ${escapeHtml(msg.next)}</div>`;
+  }
+  html += '</div>';
+  div.innerHTML = html;
+
+  const diagramEl = div.querySelector('.iv-diagram');
+  if (diagramEl && msg.diagram) {
+    ivRenderMermaid(diagramEl, msg.diagram);
+    const copyImgBtn = div.querySelector('.iv-copy-img');
+    if (copyImgBtn) {
+      copyImgBtn.addEventListener('click', () =>
+        ivCopyDiagramPng(diagramEl, copyImgBtn, msg.diagram));
+    }
+    const copyCodeBtn = div.querySelector('.iv-copy-code');
+    if (copyCodeBtn) {
+      copyCodeBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(msg.diagram).then(() => {
+          copyCodeBtn.textContent = 'Copied!';
+          setTimeout(() => { copyCodeBtn.textContent = 'Code'; }, 1200);
+        }).catch(() => showToast('Copy failed'));
+      });
+    }
+  }
+
+  interviewHistory.appendChild(div);
+  interviewHistory.scrollTop = interviewHistory.scrollHeight;
+  ivSyncScroll('history', interviewHistory.scrollTop);
 }
 
 // ---- provider switch + context stash chips ---------------------------
@@ -2253,15 +2837,20 @@ function stopPhoneMic() {
 
 // ---- controls --------------------------------------------------------
 
+function applySubTab(sub, send) {
+  document.querySelectorAll('.subtab').forEach(x =>
+    x.classList.toggle('active', x.dataset.sub === sub));
+  ivSubTab = sub;
+  liveControls.style.display = sub === 'live' ? 'grid' : 'none';
+  mockControls.style.display = sub === 'mock' ? 'grid' : 'none';
+  ivSetStatus({ state: ivSession ? (ivSession === 'live' ? 'listening' : 'listening_answer') : 'idle' });
+  if (send && ivWs && ivWs.readyState === WebSocket.OPEN) {
+    ivWs.send(JSON.stringify({ action: 'sync_subtab', sub }));
+  }
+}
+
 document.querySelectorAll('.subtab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.subtab').forEach(x => x.classList.remove('active'));
-    tab.classList.add('active');
-    ivSubTab = tab.dataset.sub;
-    liveControls.style.display = ivSubTab === 'live' ? 'flex' : 'none';
-    mockControls.style.display = ivSubTab === 'mock' ? 'flex' : 'none';
-    ivSetStatus({ state: ivSession ? (ivSession === 'live' ? 'listening' : 'listening_answer') : 'idle' });
-  });
+  tab.addEventListener('click', () => applySubTab(tab.dataset.sub, true));
 });
 
 liveStartBtn.addEventListener('click', () => {
@@ -2342,9 +2931,7 @@ ivChipHandler(ivChipCode, () => ivCtxPreview.code, 'code');
 ivChipHandler(ivChipSeg, () => ivCtx.segments + ' screenshot segment(s) stacked', 'segments');
 
 ivAutoAssistBtn.addEventListener('click', () => {
-  ivAutoAssist = !ivAutoAssist;
-  ivAutoAssistBtn.textContent = 'Auto: ' + (ivAutoAssist ? 'On' : 'Off');
-  ivAutoAssistBtn.classList.toggle('off', !ivAutoAssist);
+  setAutoAssist(!ivAutoAssist);
   ivSend({ action: 'set_auto_assist', enabled: ivAutoAssist });
 });
 
@@ -2368,6 +2955,73 @@ ivPreviewClose.addEventListener('click', () => {
   ivScreenPreview.style.display = 'none';
 });
 
+// ---- design interview mode controls ----------------------------------
+
+ivDesignBtn.addEventListener('click', () => {
+  if (ivDesign.active) {
+    ivSend({ action: 'design_next', force: true, image: ivGrabRegionB64() });
+  } else {
+    if (ivSend({ action: 'design_start' })) {
+      showToast('Reading the question panel…');
+    }
+  }
+});
+
+ivDesignNextBtn.addEventListener('click', () => {
+  ivSend({ action: 'design_next', force: true, image: ivGrabRegionB64() });
+});
+
+ivDesignEndBtn.addEventListener('click', () => ivSend({ action: 'design_end' }));
+
+ivDesignCopyBtn.addEventListener('click', () => {
+  const src = ivDesign.diagram;
+  if (!src) { showToast('No diagram yet'); return; }
+  const tmp = document.createElement('div');
+  tmp.style.position = 'fixed';
+  tmp.style.left = '-10000px';
+  document.body.appendChild(tmp);
+  ivRenderMermaid(tmp, src).then(() => {
+    ivCopyDiagramPng(tmp, ivDesignCopyBtn, src).finally(() => tmp.remove());
+  });
+});
+
+// Auto-poll: while Auto is On and a design session runs, re-read the
+// interview panel periodically (speech STT handles spoken turns; this
+// catches text-only instructions). Server floors the cadence and the rate
+// gate serializes the model calls, so polling can never stampede.
+setInterval(() => {
+  if (!ivDesign.active || !ivAutoAssist || isOverlayDisplay) return;
+  if (ivSession !== 'live') return;
+  ivSend({ action: 'design_next', force: false, image: ivGrabRegionB64() });
+}, 15000);
+
+// ---- pane scroll sync (phone leads; the pane follows) ----------------
+let ivSyncApplying = false;
+const ivSyncLastAt = { answer: 0, history: 0 };
+
+function ivSyncScroll(target, top) {
+  if (!ivWsReady) return;
+  ivWs.send(JSON.stringify({ action: 'sync_scroll', target, top: Math.round(top) }));
+}
+
+function ivAttachSyncScroll(el, target) {
+  if (!el) return;
+  el.addEventListener('scroll', () => {
+    // Locked pane: it takes no input, so it only RECEIVES positions and must
+    // never echo them (ivSyncApplying suppresses apply-echo loops).
+    // Unlocked (iv-scrollon): a native scroll on the pane mirrors back to
+    // the phone through the same throttle.
+    if (ivSyncApplying) return;
+    if (isOverlayDisplay && !document.body.classList.contains('iv-scrollon')) return;
+    const now = Date.now();
+    if (now - ivSyncLastAt[target] < 120) return;
+    ivSyncLastAt[target] = now;
+    ivSyncScroll(target, el.scrollTop);
+  }, { passive: true });
+}
+ivAttachSyncScroll(answerPanel, 'answer');
+ivAttachSyncScroll(interviewHistory, 'history');
+
 // ---- mirror panel controls -------------------------------------------
 
 mirrorOpenBtn.addEventListener('click', () => ivSend({ action: 'overlay_open' }));
@@ -2390,10 +3044,10 @@ document.getElementById('mirrorOpPlus').addEventListener('click', () =>
   ivSend({ action: 'overlay_opacity', delta: 0.1 }));
 document.getElementById('mirrorOpMinus').addEventListener('click', () =>
   ivSend({ action: 'overlay_opacity', delta: -0.1 }));
-mirrorClickBtn.addEventListener('click', () =>
-  ivSend({ action: 'overlay_click_through', enabled: !overlayState.click_through }));
 document.getElementById('mirrorCenterBtn').addEventListener('click', () =>
   ivSend({ action: 'overlay_center' }));
+document.getElementById('mirrorScrollMode').addEventListener('click', () =>
+  ivSend({ action: 'overlay_interact', enabled: !overlayState.interact }));
 document.querySelectorAll('.mirror-preset').forEach(btn => {
   btn.addEventListener('click', () =>
     ivSend({ action: 'overlay_preset', name: btn.dataset.preset }));

@@ -52,12 +52,15 @@ from audio_capture import MicCapture, SystemAudioCapture
 from elevenlabs_client import ElevenLabsSTT, ElevenLabsTTS, get_elevenlabs_key
 from interview_pipeline import (
     detect_and_answer,
+    design_extract,
+    design_turn,
     evaluate_mock_answer,
     generate_mock_question,
     solve_with_screen,
 )
 from context_capture import merge_stash, read_text as read_clipboard_text
 from provider_router import ProviderRouter
+from rate_gate import RateGate
 
 import logging
 
@@ -75,6 +78,16 @@ LIVE_FRAGMENT_WINDOW = 8.0
 # Auto screen fusion throttle / dedupe
 AUTO_SOLVE_MIN_INTERVAL = 5.0
 SOLVE_FRAME_TTL = 60.0
+
+# Live capture / STT health (audio chip + caption feedback)
+LIVE_HEALTH_TICK = 2.0          # seconds between health evaluations
+LIVE_AUDIO_SILENT = 6.0         # no loopback frames for this long -> "no audio"
+LIVE_AUDIO_QUIET = 20.0         # started, never heard a voice -> "silent"
+LIVE_STT_QUIET = 15.0           # voices but STT quiet for this long -> warn
+
+# Design interview mode (system-design ladder + mermaid diagrams)
+DESIGN_TURN_WINDOW = 6          # verbatim turns kept; older ones live in facts/decisions
+DESIGN_AUTO_MIN_INTERVAL = 12.0  # server floor for auto-polled design_next
 
 # Context capture (clipboard stash + screenshot segments)
 CTX_MIN_CHARS = 20        # ignore accidental short copies (links, single words)
@@ -140,6 +153,13 @@ class InterviewSession:
         self._live_force_text: str | None = None
         self._last_live_heard = ""
 
+        # Live capture / STT health (audio_health broadcast)
+        self._live_started_at = 0.0
+        self._last_stt_at = 0.0
+        self._health_at = 0.0
+        self._health_state: dict = {}
+        self._health_warned: set = set()
+
         # Screen fusion
         self.frame_provider = None  # set by server: screen.get_latest_jpeg
         self.auto_screen_assist = True
@@ -155,6 +175,14 @@ class InterviewSession:
 
         # Provider routing (Groq <-> Gemini) with context-carrying failover
         self.router = ProviderRouter(preferred="groq", on_change=self._on_provider_change)
+
+        # Rate-limit gate: one in-flight model call, backoff instead of toast
+        self.rate_gate = RateGate()
+
+        # Design interview mode (system-design ladder + mermaid diagrams)
+        self.design: dict = self._empty_design()
+        self._design_lock = threading.Lock()
+        self._last_design_auto_at = 0.0
 
         # Work queues
         self.live_work: "queue.Queue[str]" = queue.Queue()
@@ -227,6 +255,7 @@ class InterviewSession:
                     self._endpoint_tick(now)
                 elif self.mode == "live":
                     self._live_fragment_tick(now)
+                    self._live_health_tick(now)
             except Exception as exc:
                 log.error("Endpoint tick failed: %s", exc)
 
@@ -261,6 +290,72 @@ class InterviewSession:
             self._live_force_text = merged
             log.info("Live fragment window expired; processing buffered text")
             self.live_work.put(merged)
+
+    def _live_health_tick(self, now: float) -> None:
+        """Emit ``audio_health`` (on change) so the phone shows capture truth.
+
+        The old UI stayed silent when no audio reached the app — the user had
+        to *assume* speech was being captured.  First transition into each
+        failure kind also toasts once per session, so a dead capture can't
+        hide behind "Auto: On".
+        """
+        if now - self._health_at < LIVE_HEALTH_TICK:
+            return
+        self._health_at = now
+        started = now - self._live_started_at
+
+        activity = getattr(self.loopback, "activity", None)
+        if activity is None:
+            return
+        try:
+            act = activity()
+        except Exception as exc:
+            log.warning("loopback activity failed: %s", exc)
+            return
+
+        age = act.get("last_frame_age")
+        if not act.get("running"):
+            frames_ok = False
+        elif age is None:
+            frames_ok = started < LIVE_AUDIO_SILENT  # grace: first frames pending
+        else:
+            frames_ok = age < LIVE_AUDIO_SILENT
+
+        # STT is only "quiet" when there are RECENT VOICES to transcribe —
+        # long interviewer silences are normal and must not warn.
+        loud_recent = (act.get("last_loud_age") is not None
+                       and act["last_loud_age"] < LIVE_STT_QUIET)
+        stt_ok = True
+        if loud_recent and started > LIVE_STT_QUIET:
+            stt_ok = (self._last_stt_at > 0.0
+                      and (now - self._last_stt_at) < LIVE_STT_QUIET)
+
+        if not act.get("running"):
+            level, short, msg = "dead", "no audio", "No PC audio — loopback capture stopped"
+        elif not frames_ok:
+            level, short, msg = "dead", "no audio", "No PC audio — is the meeting playing on this PC?"
+        elif started > LIVE_AUDIO_QUIET and not act.get("heard"):
+            level, short, msg = "quiet", "silent", "Capturing silence — is the meeting playing on this PC?"
+        elif not stt_ok:
+            level, short, msg = "stt", "no transcript", "Audio OK — transcription is quiet"
+        elif age is None:
+            level, short, msg = "starting", "starting", "Listening for PC audio…"
+        else:
+            level, short, msg = "ok", "ok", "Listening for the interviewer…"
+
+        state = {
+            "level": level, "short": short, "audio": frames_ok,
+            "heard": bool(act.get("heard")), "stt": stt_ok,
+        }
+        if state == self._health_state:
+            return
+        self._health_state = state
+        self.emit({"type": "audio_health", "message": msg, **state})
+
+        if level in ("dead", "quiet", "stt") and level not in self._health_warned:
+            self._health_warned.add(level)
+            self.emit({"type": "error",
+                       "message": f"Live audio check: {msg}"})
 
     # ------------------------------------------------------------------
     # LIVE MODE
@@ -297,7 +392,15 @@ class InterviewSession:
         self._live_fragments = []
         self._live_force_text = None
         self._last_live_heard = ""
+        self._live_started_at = time.monotonic()
+        self._last_stt_at = 0.0
+        self._health_at = 0.0
+        self._health_state = {}
+        self._health_warned = set()
         self.history = []
+        with self._design_lock:
+            self.design = self._empty_design()
+        self.emit({"type": "design_state", **self._design_payload()})
         self.set_state("listening", {"message": "Live interview started"})
         self.emit({"type": "history", "items": self.history})
         log.info("Live interview mode started")
@@ -310,6 +413,11 @@ class InterviewSession:
         if was_live:
             self.mode = None
             self._live_fragments = []
+            self._health_state = {}
+            with self._design_lock:
+                self.design = self._empty_design()
+            self.emit({"type": "design_state", **self._design_payload()})
+            self.emit({"type": "rate_wait", "seconds": 0})
             self.set_state("idle", {"message": "Live interview stopped"})
         # drain pending live work
         try:
@@ -322,12 +430,14 @@ class InterviewSession:
     def _on_live_partial(self, data) -> None:
         text = _extract_text(data)
         if text:
+            self._last_stt_at = time.monotonic()
             self.emit({"type": "transcript", "text": text, "final": False})
 
     def _on_live_committed(self, data) -> None:
         text = _extract_text(data)
         if not text:
             return
+        self._last_stt_at = time.monotonic()
         now = time.monotonic()
         if text == self._last_committed and now - self._last_committed_at < 5.0:
             return
@@ -366,14 +476,26 @@ class InterviewSession:
                 text = " ".join([*self._live_fragments, text])
                 self._live_fragments = []
 
+            # --- design mode: route interviewer turns into the session ---
+            if self.design.get("active"):
+                self._run_design_turn(text)
+                if self.mode == "live":
+                    self.set_state("listening")
+                continue
+
             try:
-                result = detect_and_answer(text, history=list(self.history), router=self.router)
+                result = detect_and_answer(
+                    text, history=list(self.history), router=self.router,
+                    gate=self.rate_gate, on_wait=self._on_rate_wait,
+                )
             except Exception as exc:
                 log.error("detect_and_answer crashed: %s", exc)
+                self.emit({"type": "rate_wait", "seconds": 0})
                 self.emit({"type": "error", "message": f"Answer generation failed: {exc}"})
                 self.set_state("listening")
                 continue
             if result.get("error"):
+                self.emit({"type": "rate_wait", "seconds": 0})
                 self.emit({"type": "error", "message": f"Answer generation failed: {result['error']}"})
                 if self.mode == "live":
                     self.set_state("listening")
@@ -475,10 +597,11 @@ class InterviewSession:
             result = solve_with_screen(
                 images, transcript, history=history, variant=variant,
                 problem_text=problem, starter_code=starter, router=self.router,
+                gate=self.rate_gate, on_wait=self._on_rate_wait,
             )
         except Exception as exc:
             log.error("solve_screen failed: %s", exc)
-            self.emit({"type": "error", "message": f"Screen solve failed: {exc}"})
+            self.emit({"type": "rate_wait", "seconds": 0})
             return {"ok": False, "error": str(exc)[:300]}
 
         self._last_solve_hash = hashlib.sha256(
@@ -513,14 +636,225 @@ class InterviewSession:
         return {"ok": True, "variant": variant}
 
     def _safe_auto_solve(self) -> None:
+        """Auto screen-fusion entry point — failures must be VISIBLE.
+
+        Non-ok results used to be discarded silently, so a missing region or
+        a failed model call did nothing while the UI still showed "Auto: On".
+        Expected skips (throttle / duplicate frame) stay quiet; everything
+        else toasts once.
+        """
         try:
-            self.solve_screen(variant="solve", auto=True)
+            result = self.solve_screen(variant="solve", auto=True)
         except Exception as exc:
             log.error("auto solve crashed: %s", exc)
+            self.emit({"type": "error", "message": f"Auto assist crashed: {exc}"})
+            return
+        if result.get("ok"):
+            return
+        err = str(result.get("error", "") or "unknown error")
+        if err in ("throttled", "duplicate frame"):
+            log.info("auto solve skipped: %s", err)
+            return
+        self.emit({"type": "error", "message": f"Auto assist: {err}"})
 
     def set_auto_assist(self, enabled: bool) -> dict:
         self.auto_screen_assist = bool(enabled)
         return {"ok": True, "auto_screen_assist": self.auto_screen_assist}
+
+    # ------------------------------------------------------------------
+    # design interview mode (system-design ladder + mermaid diagrams)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _empty_design() -> dict:
+        return {
+            "active": False, "question": "", "instructions": [],
+            "stage": "clarify", "facts": [], "decisions": [],
+            "diagram": "", "next": "", "turns": [],
+        }
+
+    def _design_payload(self) -> dict:
+        """Client-facing design state (verbatim turns stay server-side)."""
+        d = self.design
+        return {
+            "active": bool(d.get("active")),
+            "question": d.get("question", ""),
+            "instructions": list(d.get("instructions") or []),
+            "stage": d.get("stage", "clarify"),
+            "facts": list(d.get("facts") or []),
+            "decisions": list(d.get("decisions") or []),
+            "diagram": d.get("diagram", ""),
+            "next": d.get("next", ""),
+        }
+
+    def _on_rate_wait(self, seconds: int, what: str = "") -> None:
+        """Rate gate callback: show/hide the 'retrying in Ns' status."""
+        self.emit({"type": "rate_wait", "seconds": int(seconds), "what": what})
+
+    def start_design(self) -> dict:
+        """Begin a design session from the current region frame (or stashed
+        problem text): extracts the question + instruction ladder."""
+        if self.mode != "live":
+            return {"ok": False, "error": "Start a live interview session first"}
+        frame = self._frame_bytes()
+        problem = self.context["problem"] or None
+        images = [frame] if frame else list(self.context["segments"])[-3:]
+        if not images and not problem:
+            return {"ok": False,
+                    "error": "No screen frame. Select a region over the question panel first."}
+        try:
+            extracted = design_extract(
+                images, problem, router=self.router,
+                gate=self.rate_gate, on_wait=self._on_rate_wait,
+            )
+        except Exception as exc:
+            log.error("design_extract failed: %s", exc)
+            self.emit({"type": "rate_wait", "seconds": 0})
+            return {"ok": False, "error": f"Could not read the question panel: {exc}"[:300]}
+        self.emit({"type": "rate_wait", "seconds": 0})
+        question = str(extracted.get("question") or "").strip()
+        if not question:
+            question = (problem or "").strip()[:600]
+        if not question:
+            return {"ok": False, "error": "Could not read a design question from the panel."}
+        with self._design_lock:
+            self.design = self._empty_design()
+            self.design.update({
+                "active": True,
+                "question": question,
+                "instructions": list(extracted.get("instructions") or []),
+            })
+        state = self._design_payload()
+        self.emit({"type": "design_state", **state})
+        log.info("Design mode started: %.80r (provider=%s)",
+                 question, extracted.get("provider", "?"))
+        return {"ok": True, **state}
+
+    def design_next(self, image_b64: str | None = None, force: bool = True) -> dict:
+        """Advance the design session from a fresh region re-read.
+
+        Manual taps (``force=True``) always run; auto-poll calls are
+        floored at DESIGN_AUTO_MIN_INTERVAL so polling can't stampede the
+        providers even before the rate gate kicks in.
+        """
+        if not self.design.get("active"):
+            return {"ok": False, "error": "No design session is active"}
+        if self.mode != "live":
+            return {"ok": False, "error": "Live session is not running"}
+        if not force:
+            now = time.monotonic()
+            if now - self._last_design_auto_at < DESIGN_AUTO_MIN_INTERVAL:
+                return {"ok": True, "skipped": True, "error": "throttled"}
+            self._last_design_auto_at = now
+        if image_b64:
+            try:
+                frame = base64.b64decode(image_b64)
+            except Exception:
+                return {"ok": False, "error": "Invalid image data"}
+        else:
+            frame = self._frame_bytes()
+        utterance = ("(the candidate re-read the interview panel — continue from "
+                     "the newest instruction or feedback shown there)")
+        outcome = self._run_design_turn(utterance, images=[frame] if frame else None)
+        if outcome.get("error"):
+            return {"ok": False, "error": outcome["error"]}
+        return {"ok": True, **self._design_payload()}
+
+    def design_end(self) -> dict:
+        with self._design_lock:
+            was_active = bool(self.design.get("active"))
+            self.design = self._empty_design()
+        if was_active:
+            self.emit({"type": "design_state", **self._design_payload()})
+            log.info("Design mode ended")
+        return {"ok": True, "active": False}
+
+    def _run_design_turn(self, utterance: str,
+                         images: list[bytes] | None = None) -> dict:
+        """Run one design turn end-to-end: snapshot state -> model -> merge
+        state patches (facts/decisions/diagram/stage) -> emit design_answer.
+
+        The snapshot/merge is done under the design lock so a live STT turn
+        and a polled ``design_next`` can never interleave into a corrupt
+        state; the model call itself runs outside the lock (the rate gate
+        serializes provider traffic, not state).
+        """
+        with self._design_lock:
+            if not self.design.get("active"):
+                return {"error": "No design session is active"}
+            snapshot = {
+                "question": self.design.get("question", ""),
+                "instructions": list(self.design.get("instructions") or []),
+                "stage": self.design.get("stage", "clarify"),
+                "facts": list(self.design.get("facts") or []),
+                "decisions": list(self.design.get("decisions") or []),
+                "diagram": self.design.get("diagram", ""),
+            }
+        try:
+            result = design_turn(
+                utterance, snapshot, history=list(self.history[-4:]),
+                images=images, router=self.router,
+                gate=self.rate_gate, on_wait=self._on_rate_wait,
+            )
+        except Exception as exc:
+            log.error("design turn crashed: %s", exc)
+            self.emit({"type": "rate_wait", "seconds": 0})
+            self.emit({"type": "error", "message": f"Design answer failed: {exc}"})
+            return {"error": str(exc)[:200]}
+        if result.get("error"):
+            self.emit({"type": "rate_wait", "seconds": 0})
+            self.emit({"type": "error",
+                       "message": f"Design answer failed: {result['error']}"})
+            return {"error": str(result["error"])[:200]}
+
+        with self._design_lock:
+            if not self.design.get("active"):
+                return {"error": "Design session ended mid-turn"}
+            if result.get("stage"):
+                self.design["stage"] = result["stage"]
+            for fact in result.get("facts") or []:
+                if fact not in self.design["facts"]:
+                    self.design["facts"].append(fact)
+            for decision in result.get("decisions") or []:
+                if decision not in self.design["decisions"]:
+                    self.design["decisions"].append(decision)
+            if result.get("mermaid"):
+                self.design["diagram"] = result["mermaid"]
+            if result.get("next"):
+                self.design["next"] = result["next"]
+            entry = {
+                "id": uuid.uuid4().hex[:12],
+                "heard": utterance,
+                "spoken": result.get("spoken", ""),
+                "next": result.get("next", ""),
+                "ts": time.time(),
+            }
+            self.design["turns"].append(entry)
+            if len(self.design["turns"]) > DESIGN_TURN_WINDOW:
+                del self.design["turns"][:-DESIGN_TURN_WINDOW]
+            payload = {**self._design_payload()}
+
+        # Keep session history coherent so answers AFTER the design session
+        # still reference what was discussed (design state carries the rest).
+        if entry["spoken"]:
+            self.history.append({
+                "id": entry["id"],
+                "question": utterance[:200],
+                "heard": utterance,
+                "answer": entry["spoken"],
+                "ts": entry["ts"],
+            })
+        self.emit({
+            "type": "design_answer",
+            "provider": result.get("provider", ""),
+            "answer": entry,
+            **payload,
+        })
+        log.info("design turn: stage=%s provider=%s facts=%d decisions=%d diagram=%d chars",
+                 payload["stage"], result.get("provider", "?"),
+                 len(payload["facts"]), len(payload["decisions"]),
+                 len(payload["diagram"]))
+        return {"answered": True}
 
     # ------------------------------------------------------------------
     # provider switching (Groq <-> Gemini, context carried automatically)
@@ -859,6 +1193,7 @@ class InterviewSession:
             question_number=self.mock_question_number + 1,
             previous_qa=self.mock_history,
             router=self.router,
+            gate=self.rate_gate,
         )
         if token != self._mock_skip_token or self.mode != "mock":
             return  # superseded by skip/stop while generating
@@ -888,6 +1223,7 @@ class InterviewSession:
         evaluation = evaluate_mock_answer(
             self.mock_question, answer,
             history=self.mock_history, router=self.router,
+            gate=self.rate_gate,
         )
         if self.mock_history:
             self.mock_history[-1]["answer"] = answer
@@ -922,6 +1258,7 @@ class InterviewSession:
             "clients": len(self.clients),
             "provider": self.router.status(),
             "context": self.context_status(),
+            "design": self._design_payload(),
         }
 
 

@@ -50,6 +50,31 @@ overlay.on_state = lambda st: session.emit({"type": "overlay_state", **st})
 # overlay pane starts on the same tab as the phone.
 _current_tab = {"tab": "groq_vision"}
 
+
+def _stream_state_payload() -> dict:
+    region = screen.get_region()
+    return {
+        "running": screen.is_running(),
+        "region": {
+            "left": region[0], "top": region[1],
+            "right": region[2], "bottom": region[3],
+        } if region else None,
+    }
+
+
+def _emit_stream_state():
+    session.emit({"type": "stream_state", **_stream_state_payload()})
+
+
+def _emit_session_state(fresh: bool = False):
+    session.emit({
+        "type": "session_state",
+        "state": session.mode or "idle",
+        "mock_state": session.mock_state,
+        "provider": session.router.active,
+        "fresh": fresh,
+    })
+
 _pump_task = None
 
 
@@ -161,6 +186,10 @@ async def accept_image(req: CaptureRequest):
     provider = result.get("provider", "?")
     log.info(f"Result: detected={detected} provider={provider} time={elapsed:.1f}s")
 
+    # Mirror the answer to every client (the phone renders from this broadcast
+    # too, so phone and pane always agree).
+    session.emit({"type": "quiz_result", "result": result})
+
     return JSONResponse(content=result)
 
 
@@ -262,11 +291,11 @@ async def _overlay_call(method: str, *args, **kwargs):
     try:
         return await loop.run_in_executor(
             None,
-            lambda: overlay.submit(getattr(overlay, method), *args, **kwargs).result(timeout=8),
+            lambda: overlay.submit(getattr(overlay, method), *args, **kwargs).result(timeout=20),
         )
     except Exception as exc:
         log.error("overlay %s failed: %s", method, exc)
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": str(exc) or type(exc).__name__}
 
 
 @app.websocket("/ws/interview")
@@ -280,6 +309,8 @@ async def ws_interview(websocket: WebSocket):
             "provider": session.router.active,
             "overlay": overlay.status(),
             "tab": _current_tab["tab"],
+            "stream": _stream_state_payload(),
+            "design": session._design_payload(),
             "ts": time.time(),
         })
         while True:
@@ -290,11 +321,15 @@ async def ws_interview(websocket: WebSocket):
                 import asyncio
                 result = await asyncio.get_event_loop().run_in_executor(None, session.start_live)
                 await websocket.send_json({"type": "action_result", "action": action, **result})
+                if result.get("ok"):
+                    _emit_session_state(fresh=True)
 
             elif action == "stop_live":
                 import asyncio
                 result = await asyncio.get_event_loop().run_in_executor(None, session.stop_live)
                 await websocket.send_json({"type": "action_result", "action": action, **result})
+                if result.get("ok"):
+                    _emit_session_state()
 
             elif action == "start_mock":
                 import asyncio
@@ -305,11 +340,15 @@ async def ws_interview(websocket: WebSocket):
                     None, lambda: session.start_mock(mic_source, role, level)
                 )
                 await websocket.send_json({"type": "action_result", "action": action, **result})
+                if result.get("ok"):
+                    _emit_session_state(fresh=True)
 
             elif action == "stop_mock":
                 import asyncio
                 result = await asyncio.get_event_loop().run_in_executor(None, session.stop_mock)
                 await websocket.send_json({"type": "action_result", "action": action, **result})
+                if result.get("ok"):
+                    _emit_session_state()
 
             elif action == "skip_question":
                 result = session.skip_mock_question()
@@ -337,9 +376,30 @@ async def ws_interview(websocket: WebSocket):
                 )
                 await websocket.send_json({"type": "action_result", "action": action, **result})
 
+            # ---- design interview mode -------------------------------
+            elif action == "design_start":
+                import asyncio
+                result = await asyncio.get_event_loop().run_in_executor(None, session.start_design)
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "design_next":
+                import asyncio
+                image = data.get("image")
+                force = bool(data.get("force", True))
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: session.design_next(image_b64=image, force=force)
+                )
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
+            elif action == "design_end":
+                result = session.design_end()
+                await websocket.send_json({"type": "action_result", "action": action, **result})
+
             elif action == "set_auto_assist":
                 result = session.set_auto_assist(bool(data.get("enabled", True)))
                 await websocket.send_json({"type": "action_result", "action": action, **result})
+                if result.get("ok"):
+                    session.emit({"type": "auto_assist", "enabled": result.get("auto_screen_assist")})
 
             elif action == "stash_capture":
                 slot = data.get("slot", "problem")
@@ -419,10 +479,6 @@ async def ws_interview(websocket: WebSocket):
                 result = await _overlay_call("opacity_step", float(data.get("delta", 0.1)))
                 await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
 
-            elif action == "overlay_click_through":
-                result = await _overlay_call("set_click_through", bool(data.get("enabled", True)))
-                await websocket.send_json({"type": "action_result", "action": action, "ok": True, **result})
-
             elif action == "overlay_hide":
                 enabled = data.get("enabled")
                 result = await _overlay_call(
@@ -435,6 +491,33 @@ async def ws_interview(websocket: WebSocket):
                     "type": "action_result", "action": action, "ok": True,
                     **overlay.status(),
                 })
+
+            elif action == "overlay_interact":
+                # Scroll mode: unlock native wheel/scrollbar input on the
+                # pane (auto re-locks on Hide, close, or client disconnect).
+                result = await _overlay_call(
+                    "set_interact", bool(data.get("enabled", False))
+                )
+                await websocket.send_json({
+                    "type": "action_result", "action": action, "ok": True, **result,
+                })
+
+            # ---- phone scroll position mirrored into the pane -----------
+            elif action == "sync_scroll":
+                target = data.get("target")
+                if target in ("answer", "history"):
+                    try:
+                        top = int(data.get("top", 0))
+                    except (TypeError, ValueError):
+                        top = 0
+                    top = max(0, min(top, 5_000_000))
+                    session.emit({"type": "scroll_sync", "target": target, "top": top})
+                    await websocket.send_json({"type": "action_result", "action": action, "ok": True})
+                else:
+                    await websocket.send_json({
+                        "type": "action_result", "action": action, "ok": False,
+                        "error": f"Unknown scroll target: {target!r}",
+                    })
 
             # ---- cross-client tab sync (phone <-> overlay pane) --------
             elif action == "sync_tab":
@@ -452,6 +535,25 @@ async def ws_interview(websocket: WebSocket):
             elif action == "mic_audio":
                 session.handle_phone_mic_audio(data.get("data", ""))
 
+            # ---- cross-client display sync (toast / Live-Mock subtab) ---
+            elif action == "relay_toast":
+                text = str(data.get("text", ""))[:200]
+                nonce = str(data.get("nonce", ""))[:64]
+                if text:
+                    session.emit({"type": "toast", "text": text, "nonce": nonce})
+                await websocket.send_json({"type": "action_result", "action": action, "ok": True})
+
+            elif action == "sync_subtab":
+                sub = data.get("sub")
+                if sub in {"live", "mock"}:
+                    session.emit({"type": "subtab_changed", "sub": sub})
+                    await websocket.send_json({"type": "action_result", "action": action, "ok": True})
+                else:
+                    await websocket.send_json({
+                        "type": "action_result", "action": action, "ok": False,
+                        "error": f"Unknown subtab: {sub!r}",
+                    })
+
             elif action == "ping":
                 await websocket.send_json({"type": "pong", "ts": time.time()})
 
@@ -466,6 +568,13 @@ async def ws_interview(websocket: WebSocket):
         log.error("WebSocket error: %s", exc)
     finally:
         session.clients.discard(websocket)
+        if overlay.status().get("interact"):
+            # Fail-closed: a dropped client must not leave Scroll mode
+            # unlocked on an unattended pane.
+            try:
+                await _overlay_call("set_interact", False)
+            except Exception as exc:  # noqa: BLE001
+                log.error("overlay disconnect re-lock failed: %s", exc)
 
 
 @app.get("/stream")
@@ -680,6 +789,8 @@ async def select_screen_region():
     if not screen.is_running():
         screen.start()
 
+    _emit_stream_state()
+
     return {
         "selected": True,
         "region": {"left": left, "top": top, "right": right, "bottom": bottom},
@@ -702,15 +813,18 @@ async def start_screen_capture():
     screen.set_region(left, top, right, bottom)
 
     if screen.is_running():
+        _emit_stream_state()
         return {"started": True, "message": "Already running"}
 
     screen.start()
+    _emit_stream_state()
     return {"started": True, "message": "Screen capture started"}
 
 
 @app.post("/api/screen/stop")
 async def stop_screen_capture():
     screen.stop()
+    _emit_stream_state()
     return {"stopped": True}
 
 
